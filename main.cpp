@@ -1,11 +1,13 @@
-#include <winsock2.h>
-#include <ws2tcpip.h>
 #include <combaseapi.h>
 #include <iostream>
 #include <optional>
 #include <regex>
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include <chrono>
 
 using namespace std;
+using namespace std::chrono;
 
 struct icmpHeader
 {
@@ -24,7 +26,6 @@ struct icmpPacket
 
 /// Создание сокета
 SOCKET createSocket();
-
 
 /// Подключение сокета
 optional<sockaddr_in> connectAddr();
@@ -70,23 +71,26 @@ int main()
     return 0;
 }
 
-unsigned long getLocalIP() {
+unsigned long getLocalIP()
+{
     SOCKET udpSock = socket(AF_INET, SOCK_DGRAM, 0);
-    if (udpSock == INVALID_SOCKET) return INADDR_ANY;
+    if (udpSock == INVALID_SOCKET)
+        return INADDR_ANY;
 
     sockaddr_in loopback;
     loopback.sin_family = AF_INET;
     loopback.sin_addr.s_addr = inet_addr("8.8.8.8");
     loopback.sin_port = htons(53);
 
-    if (connect(udpSock, reinterpret_cast<sockaddr*>(&loopback), sizeof(loopback)) == SOCKET_ERROR) {
+    if (connect(udpSock, reinterpret_cast<sockaddr *>(&loopback), sizeof(loopback))
+        == SOCKET_ERROR) {
         closesocket(udpSock);
         return INADDR_ANY;
     }
 
     sockaddr_in localAddr;
     int len = sizeof(localAddr);
-    if (getsockname(udpSock, reinterpret_cast<sockaddr*>(&localAddr), &len) == SOCKET_ERROR) {
+    if (getsockname(udpSock, reinterpret_cast<sockaddr *>(&localAddr), &len) == SOCKET_ERROR) {
         closesocket(udpSock);
         return INADDR_ANY;
     }
@@ -122,7 +126,6 @@ SOCKET createSocket()
         return INVALID_SOCKET;
     }
 
-
     sockaddr_in localAddr;
     memset(&localAddr, 0, sizeof(localAddr));
     localAddr.sin_family = AF_INET;
@@ -132,7 +135,7 @@ SOCKET createSocket()
     char ipStr[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &(localAddr.sin_addr), ipStr, INET_ADDRSTRLEN);
 
-    if (::bind(sock, reinterpret_cast<SOCKADDR*>(&localAddr), sizeof(localAddr)) == SOCKET_ERROR) {
+    if (::bind(sock, reinterpret_cast<SOCKADDR *>(&localAddr), sizeof(localAddr)) == SOCKET_ERROR) {
         int lastErr = WSAGetLastError();
         cerr << "Ошибка bind для SOCK_RAW: " << lastErr << endl;
         closesocket(sock);
@@ -243,8 +246,18 @@ void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr)
     icmpPacket pac;
     DWORD timeout = 3000;
 
-    if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout)) == SOCKET_ERROR ||
-        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout)) == SOCKET_ERROR) {
+    if (setsockopt(sock,
+                   SOL_SOCKET,
+                   SO_SNDTIMEO,
+                   reinterpret_cast<const char *>(&timeout),
+                   sizeof(timeout))
+            == SOCKET_ERROR
+        || setsockopt(sock,
+                      SOL_SOCKET,
+                      SO_RCVTIMEO,
+                      reinterpret_cast<const char *>(&timeout),
+                      sizeof(timeout))
+               == SOCKET_ERROR) {
         cerr << "Не удалось установить таймауты сокета: " << WSAGetLastError() << endl;
         return;
     }
@@ -263,27 +276,43 @@ void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr)
         pac.header.sequence = static_cast<unsigned short>(i);
         pac.data = guid;
 
-        pac.header.checkSum = calculateChecksum(reinterpret_cast<unsigned short *>(&pac), sizeof(pac));
+        pac.header.checkSum = calculateChecksum(reinterpret_cast<unsigned short *>(&pac),
+                                                sizeof(pac));
 
         int ttl = i + 1;
-        if (setsockopt(sock, IPPROTO_IP, IP_TTL, reinterpret_cast<const char*>(&ttl), sizeof(ttl)) == SOCKET_ERROR) {
+        if (setsockopt(sock, IPPROTO_IP, IP_TTL, reinterpret_cast<const char *>(&ttl), sizeof(ttl))
+            == SOCKET_ERROR) {
             cerr << "Не удалось установить TTL: " << WSAGetLastError() << endl;
             return;
         }
 
-        int res = sendto(sock, reinterpret_cast<const char *>(&pac), sizeof(pac), 0,
-                         reinterpret_cast<SOCKADDR *>(&destAddr), sizeof(destAddr));
+        int res = sendto(sock,
+                         reinterpret_cast<const char *>(&pac),
+                         sizeof(pac),
+                         0,
+                         reinterpret_cast<SOCKADDR *>(&destAddr),
+                         sizeof(destAddr));
         if (res == SOCKET_ERROR) {
             cerr << "Ошибка отправки: " << WSAGetLastError() << endl;
             return;
         }
+
+        auto start = chrono::high_resolution_clock::now();
 
         sockaddr_in fromAddr;
         int fromLen = sizeof(fromAddr);
         bool stepCompleted = false;
 
         while (!stepCompleted) {
-            int recvRes = recvfrom(sock, recvBuffer, bufferSize, 0, reinterpret_cast<SOCKADDR*>(&fromAddr), &fromLen);
+            int recvRes = recvfrom(sock,
+                                   recvBuffer,
+                                   bufferSize,
+                                   0,
+                                   reinterpret_cast<SOCKADDR *>(&fromAddr),
+                                   &fromLen);
+            auto end = high_resolution_clock::now();
+            auto duration = high_resolution_clock::duration(end-start);
+            auto durationMs = duration_cast<milliseconds>(duration);
 
             if (recvRes == SOCKET_ERROR) {
                 if (WSAGetLastError() == WSAETIMEDOUT) {
@@ -296,14 +325,16 @@ void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr)
                 }
             }
 
-            if (recvRes < 20) continue;
+            if (recvRes < 20)
+                continue;
 
-            unsigned char* ipHeader = reinterpret_cast<unsigned char*>(recvBuffer);
+            unsigned char *ipHeader = reinterpret_cast<unsigned char *>(recvBuffer);
             int ipHeaderLen = (ipHeader[0] & 0x0F) * 4;
 
-            if (recvRes < ipHeaderLen + 8) continue;
+            if (recvRes < ipHeaderLen + 8)
+                continue;
 
-            icmpHeader* icmpRes = reinterpret_cast<icmpHeader*>(recvBuffer + ipHeaderLen);
+            icmpHeader *icmpRes = reinterpret_cast<icmpHeader *>(recvBuffer + ipHeaderLen);
 
             if (icmpRes->type == 0) {
                 if (icmpRes->id != processId || icmpRes->sequence != i) {
@@ -314,28 +345,36 @@ void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr)
                 inet_ntop(AF_INET, &(fromAddr.sin_addr), ipStr, INET_ADDRSTRLEN);
 
                 char hostName[NI_MAXHOST];
-                int dnsRes = getnameinfo(reinterpret_cast<SOCKADDR*>(&fromAddr), sizeof(fromAddr),
-                                         hostName, NI_MAXHOST, nullptr, 0, 0);
+                int dnsRes = getnameinfo(reinterpret_cast<SOCKADDR *>(&fromAddr),
+                                         sizeof(fromAddr),
+                                         hostName,
+                                         NI_MAXHOST,
+                                         nullptr,
+                                         0,
+                                         0);
 
                 if (dnsRes == 0 && strcmp(hostName, ipStr) != 0) {
-                    cout << ttl << "\t" << hostName << "\t(" << ipStr << ")";
+                    cout << ttl << "\t" << hostName << "\t(" << ipStr << ")" << "\t(" << durationMs.count() << " мс)";
                 } else {
-                    cout << ttl << "\t" << ipStr;
+                    cout << ttl << "\t" << ipStr << "\t(" << durationMs.count() << " мс)";
                 }
                 cout << "\tДостигнут целевой узел" << endl;
 
                 return;
-            }
-            else if (icmpRes->type == 11) {
+            } else if (icmpRes->type == 11) {
                 int innerIpHeaderOffset = ipHeaderLen + 8;
-                if (recvRes < innerIpHeaderOffset + 20) continue;
+                if (recvRes < innerIpHeaderOffset + 20)
+                    continue;
 
-                unsigned char* innerIpHeader = reinterpret_cast<unsigned char*>(recvBuffer + innerIpHeaderOffset);
+                unsigned char *innerIpHeader = reinterpret_cast<unsigned char *>(
+                    recvBuffer + innerIpHeaderOffset);
                 int innerIpHeaderLen = (innerIpHeader[0] & 0x0F) * 4;
 
-                if (recvRes < innerIpHeaderOffset + innerIpHeaderLen + 8) continue;
+                if (recvRes < innerIpHeaderOffset + innerIpHeaderLen + 8)
+                    continue;
 
-                icmpHeader* originalIcmp = reinterpret_cast<icmpHeader*>(recvBuffer + innerIpHeaderOffset + innerIpHeaderLen);
+                icmpHeader *originalIcmp = reinterpret_cast<icmpHeader *>(
+                    recvBuffer + innerIpHeaderOffset + innerIpHeaderLen);
 
                 if (originalIcmp->id != processId || originalIcmp->sequence != i) {
                     continue;
@@ -345,13 +384,18 @@ void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr)
                 inet_ntop(AF_INET, &(fromAddr.sin_addr), ipStr, INET_ADDRSTRLEN);
 
                 char hostName[NI_MAXHOST];
-                int dnsRes = getnameinfo(reinterpret_cast<SOCKADDR*>(&fromAddr), sizeof(fromAddr),
-                                         hostName, NI_MAXHOST, nullptr, 0, 0);
+                int dnsRes = getnameinfo(reinterpret_cast<SOCKADDR *>(&fromAddr),
+                                         sizeof(fromAddr),
+                                         hostName,
+                                         NI_MAXHOST,
+                                         nullptr,
+                                         0,
+                                         0);
 
                 if (dnsRes == 0 && strcmp(hostName, ipStr) != 0) {
-                    cout << ttl << "\t" << hostName << "\t(" << ipStr << ")" << endl;
+                    cout << ttl << "\t" << hostName << "\t(" << ipStr << ")"  << "\t(" << durationMs.count() << " мс)" << endl;
                 } else {
-                    cout << ttl << "\t" << ipStr << endl;
+                    cout << ttl << "\t" << ipStr  << "\t(" << durationMs.count() << " мс)" << endl;
                 }
 
                 stepCompleted = true;

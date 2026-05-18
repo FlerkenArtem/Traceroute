@@ -1,14 +1,15 @@
+#include <winsock2.h>
+#include <ws2tcpip.h>
 #include <combaseapi.h>
+#include <chrono>
 #include <iostream>
 #include <optional>
 #include <regex>
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <chrono>
 
 using namespace std;
 using namespace std::chrono;
 
+/// Структура заголовка ICMP
 struct icmpHeader
 {
     unsigned char type;
@@ -18,11 +19,15 @@ struct icmpHeader
     unsigned short sequence;
 };
 
+/// Структура пакета ICMP
 struct icmpPacket
 {
     icmpHeader header;
     GUID data;
 };
+
+/// Получение локального IP адреса
+unsigned long getLocalIP();
 
 /// Создание сокета
 SOCKET createSocket();
@@ -45,6 +50,7 @@ void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr);
 /// Вычисление контрольной суммы
 unsigned short calculateChecksum(unsigned short *buffer, int size);
 
+/// Точка входа в программу
 int main()
 {
     system("chcp 65001");
@@ -73,21 +79,23 @@ int main()
 
 unsigned long getLocalIP()
 {
-    SOCKET udpSock = socket(AF_INET, SOCK_DGRAM, 0);
+    SOCKET udpSock = socket(AF_INET, SOCK_DGRAM, 0); // Создание сокета UDP
     if (udpSock == INVALID_SOCKET)
         return INADDR_ANY;
 
     sockaddr_in loopback;
     loopback.sin_family = AF_INET;
     loopback.sin_addr.s_addr = inet_addr("8.8.8.8");
-    loopback.sin_port = htons(53);
+    loopback.sin_port = htons(53); // Порт DNS
 
+    // Подключение к адресу
     if (connect(udpSock, reinterpret_cast<sockaddr *>(&loopback), sizeof(loopback))
         == SOCKET_ERROR) {
         closesocket(udpSock);
         return INADDR_ANY;
     }
 
+    // Извлечение IP-адреса
     sockaddr_in localAddr;
     int len = sizeof(localAddr);
     if (getsockname(udpSock, reinterpret_cast<sockaddr *>(&localAddr), &len) == SOCKET_ERROR) {
@@ -209,8 +217,8 @@ optional<sockaddr_in> connectDnsAddr()
     struct addrinfo *result = nullptr;
 
     ZeroMemory(&hints, sizeof(hints));
-    hints.ai_family = AF_INET; // IPv4
-    hints.ai_socktype = SOCK_RAW;
+    hints.ai_family = AF_INET;        // IPv4
+    hints.ai_socktype = SOCK_RAW;     // Сырой сокет
     hints.ai_protocol = IPPROTO_ICMP; // ICMP
 
     int dnsResult = getaddrinfo(hostname.c_str(), nullptr, &hints, &result);
@@ -246,31 +254,36 @@ void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr)
     icmpPacket pac;
     DWORD timeout = 3000;
 
-    if (setsockopt(sock,
-                   SOL_SOCKET,
-                   SO_SNDTIMEO,
-                   reinterpret_cast<const char *>(&timeout),
-                   sizeof(timeout))
+    if (setsockopt(sock,        // Сокет
+                   SOL_SOCKET,  // Уровень сокета
+                   SO_SNDTIMEO, // Таймаут отправки
+                   reinterpret_cast<const char *>(
+                       &timeout),   // Указатель на значение таймаута отправки
+                   sizeof(timeout)) // Размер таймаута
             == SOCKET_ERROR
-        || setsockopt(sock,
-                      SOL_SOCKET,
-                      SO_RCVTIMEO,
-                      reinterpret_cast<const char *>(&timeout),
-                      sizeof(timeout))
+        || setsockopt(sock,        // Сокет
+                      SOL_SOCKET,  // Уровень сокета
+                      SO_RCVTIMEO, // Таймаут получения
+                      reinterpret_cast<const char *>(
+                          &timeout),   // Указатель на значение таймаута отправки
+                      sizeof(timeout)) // Размер таймаута
                == SOCKET_ERROR) {
         cerr << "Не удалось установить таймауты сокета: " << WSAGetLastError() << endl;
         return;
     }
 
-    const int bufferSize = 1024;
-    char recvBuffer[bufferSize];
+    const int bufferSize = 1024; // Размер буфера
+    char recvBuffer[bufferSize]; // Буфер
 
     for (int i = 0; i < maxHops; i++) {
+        // Созданте GUID для отправки
         GUID guid;
         CoCreateGuid(&guid);
 
+        // ICMP эхо-запрос
         pac.header.type = 8;
         pac.header.code = 0;
+
         pac.header.checkSum = 0;
         pac.header.id = processId;
         pac.header.sequence = static_cast<unsigned short>(i);
@@ -279,24 +292,32 @@ void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr)
         pac.header.checkSum = calculateChecksum(reinterpret_cast<unsigned short *>(&pac),
                                                 sizeof(pac));
 
+        // Расчет времени жизни
         int ttl = i + 1;
-        if (setsockopt(sock, IPPROTO_IP, IP_TTL, reinterpret_cast<const char *>(&ttl), sizeof(ttl))
+
+        if (setsockopt(sock,                                 // Сокет
+                       IPPROTO_IP,                           // Уровень IP
+                       IP_TTL,                               // Имя параметра - время жизни
+                       reinterpret_cast<const char *>(&ttl), // Указатель на переменную времени жизни
+                       sizeof(ttl))                          // размер переменной времени жизни
             == SOCKET_ERROR) {
             cerr << "Не удалось установить TTL: " << WSAGetLastError() << endl;
             return;
         }
 
-        int res = sendto(sock,
-                         reinterpret_cast<const char *>(&pac),
-                         sizeof(pac),
-                         0,
-                         reinterpret_cast<SOCKADDR *>(&destAddr),
-                         sizeof(destAddr));
+        // Отправка данных
+        int res = sendto(sock,                                    // Сокет
+                         reinterpret_cast<const char *>(&pac),    // Указатель на буфер с данными
+                         sizeof(pac),                             // Размер буфера
+                         0,                                       // Флаги
+                         reinterpret_cast<SOCKADDR *>(&destAddr), // Указатель на адрес назначения
+                         sizeof(destAddr));                       // Размер адреса назначения
         if (res == SOCKET_ERROR) {
             cerr << "Ошибка отправки: " << WSAGetLastError() << endl;
             return;
         }
 
+        // Время начала отправки
         auto start = chrono::high_resolution_clock::now();
 
         sockaddr_in fromAddr;
@@ -304,46 +325,63 @@ void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr)
         bool stepCompleted = false;
 
         while (!stepCompleted) {
-            int recvRes = recvfrom(sock,
-                                   recvBuffer,
-                                   bufferSize,
-                                   0,
-                                   reinterpret_cast<SOCKADDR *>(&fromAddr),
-                                   &fromLen);
-            auto end = high_resolution_clock::now();
-            auto duration = high_resolution_clock::duration(end-start);
-            auto durationMs = duration_cast<milliseconds>(duration);
+            // Получение данных
+            int recvRes = recvfrom(sock,       // Сокет
+                                   recvBuffer, // Указаьель на буфер
+                                   bufferSize, // Размер буфера
+                                   0,          // Флаги
+                                   reinterpret_cast<SOCKADDR *>(
+                                       &fromAddr), // Указатель на адрес отправителя
+                                   &fromLen);      // Длина адреса отправителя
 
+            // Время получения
+            auto end = high_resolution_clock::now();
+
+            // Промежуток времени в мс
+            auto durationMs = duration_cast<milliseconds>(
+                high_resolution_clock::duration(end - start));
+
+            // Обработка ошибок
             if (recvRes == SOCKET_ERROR) {
+                // Превышен таймаут
                 if (WSAGetLastError() == WSAETIMEDOUT) {
                     cout << ttl << "\t* * *" << endl;
                     stepCompleted = true;
                     continue;
-                } else {
+                } else { // Отображение кода ошибки
                     cerr << "Ошибка получения: " << WSAGetLastError() << endl;
                     return;
                 }
             }
 
+            // Валидация длины
+            // Заголовок IP-пакета равен 20 байт.
             if (recvRes < 20)
                 continue;
 
+            // Заголовок IP-пакета
             unsigned char *ipHeader = reinterpret_cast<unsigned char *>(recvBuffer);
-            int ipHeaderLen = (ipHeader[0] & 0x0F) * 4;
+            int ipHeaderLen = (ipHeader[0] & 0x0F) * 4; // Длина заголовка
 
+            // Обработка ошибки
+            // ipHeaderLen + 8 - Минимально допустимый размер пакета
             if (recvRes < ipHeaderLen + 8)
                 continue;
 
             icmpHeader *icmpRes = reinterpret_cast<icmpHeader *>(recvBuffer + ipHeaderLen);
 
+            // Эхо-ответ
             if (icmpRes->type == 0) {
+                // Проверка ID процесса и последовательности
                 if (icmpRes->id != processId || icmpRes->sequence != i) {
                     continue;
                 }
 
+                // IP-адрес узла
                 char ipStr[INET_ADDRSTRLEN];
                 inet_ntop(AF_INET, &(fromAddr.sin_addr), ipStr, INET_ADDRSTRLEN);
 
+                // DNS-имя узла
                 char hostName[NI_MAXHOST];
                 int dnsRes = getnameinfo(reinterpret_cast<SOCKADDR *>(&fromAddr),
                                          sizeof(fromAddr),
@@ -353,36 +391,48 @@ void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr)
                                          0,
                                          0);
 
+                // Вывод данных
                 if (dnsRes == 0 && strcmp(hostName, ipStr) != 0) {
-                    cout << ttl << "\t" << hostName << "\t(" << ipStr << ")" << "\t(" << durationMs.count() << " мс)";
+                    cout << ttl << "\t" << hostName << "\t(" << ipStr << ")" << "\t("
+                         << durationMs.count() << " мс)";
                 } else {
                     cout << ttl << "\t" << ipStr << "\t(" << durationMs.count() << " мс)";
                 }
                 cout << "\tДостигнут целевой узел" << endl;
 
                 return;
-            } else if (icmpRes->type == 11) {
+            } else if (icmpRes->type == 11) { // Промежуточный узел
+
+                // Получение смещения до начала вложенного IP-пакета
                 int innerIpHeaderOffset = ipHeaderLen + 8;
                 if (recvRes < innerIpHeaderOffset + 20)
                     continue;
 
+                // Извлечение IP-заголовка из IMCP-ответа
                 unsigned char *innerIpHeader = reinterpret_cast<unsigned char *>(
                     recvBuffer + innerIpHeaderOffset);
+
+                // Длина вложенного IP-заголовка
                 int innerIpHeaderLen = (innerIpHeader[0] & 0x0F) * 4;
 
+                // Вычисление минимального допустимого размера пакета
                 if (recvRes < innerIpHeaderOffset + innerIpHeaderLen + 8)
                     continue;
 
+                // Заголовок оригитального ICMP-запроса
                 icmpHeader *originalIcmp = reinterpret_cast<icmpHeader *>(
                     recvBuffer + innerIpHeaderOffset + innerIpHeaderLen);
 
+                // Проверка соответствия ID и последовательности
                 if (originalIcmp->id != processId || originalIcmp->sequence != i) {
                     continue;
                 }
 
+                // IP-адрес узла
                 char ipStr[INET_ADDRSTRLEN];
                 inet_ntop(AF_INET, &(fromAddr.sin_addr), ipStr, INET_ADDRSTRLEN);
 
+                // DNS-имя узла
                 char hostName[NI_MAXHOST];
                 int dnsRes = getnameinfo(reinterpret_cast<SOCKADDR *>(&fromAddr),
                                          sizeof(fromAddr),
@@ -392,12 +442,15 @@ void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr)
                                          0,
                                          0);
 
+                // Вывод данных
                 if (dnsRes == 0 && strcmp(hostName, ipStr) != 0) {
-                    cout << ttl << "\t" << hostName << "\t(" << ipStr << ")"  << "\t(" << durationMs.count() << " мс)" << endl;
+                    cout << ttl << "\t" << hostName << "\t(" << ipStr << ")" << "\t("
+                         << durationMs.count() << " мс)" << endl;
                 } else {
-                    cout << ttl << "\t" << ipStr  << "\t(" << durationMs.count() << " мс)" << endl;
+                    cout << ttl << "\t" << ipStr << "\t(" << durationMs.count() << " мс)" << endl;
                 }
 
+                // Флаг завершения шага
                 stepCompleted = true;
             }
         }
@@ -407,14 +460,22 @@ void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr)
 unsigned short calculateChecksum(unsigned short *buffer, int size)
 {
     unsigned long cksum = 0;
+
+    // Суммируем каждые 2 байта (16 бит)
     while (size > 1) {
         cksum += *buffer++;
         size -= 2;
     }
+
+    // Если остался один байт, обрабатываем его как младший байт в слове
     if (size) {
         cksum += *(static_cast<unsigned char *>(static_cast<void *>(buffer)));
     }
+
+    // Сворачиваем 32-битную сумму в 16 бит (складываем старшие 16 бит с младшими)
     cksum = (cksum >> 16) + (cksum & 0xffff);
     cksum += (cksum >> 16);
+
+    // Возвращаем побитовое дополнение
     return static_cast<unsigned short>(~cksum);
 }

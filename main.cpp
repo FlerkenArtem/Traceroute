@@ -4,31 +4,8 @@
 #include <iostream>
 #include <optional>
 #include <regex>
-#include <chrono>
 
 using namespace std;
-using namespace std::chrono;
-
-struct ipHeader
-{
-    unsigned char headerLength : 4;
-    unsigned char version : 4;
-    unsigned char typeOfService;
-    unsigned short length;
-    unsigned short id;
-    unsigned short fragmentOffset;
-    unsigned char ttl;
-    unsigned char protocol;
-    unsigned short checkSum;
-    IN_ADDR from;
-    IN_ADDR dest;
-};
-
-struct ipPacket
-{
-    ipHeader header;
-    GUID data;
-};
 
 struct icmpHeader
 {
@@ -46,10 +23,8 @@ struct icmpPacket
 };
 
 /// Создание сокета
-SOCKET createIcmpSocket();
+SOCKET createSocket();
 
-/// Создание сокета
-SOCKET createUdpSocket();
 
 /// Подключение сокета
 optional<sockaddr_in> connectAddr();
@@ -64,7 +39,7 @@ optional<sockaddr_in> connectDnsAddr();
 int maxHops();
 
 /// Определение маршрута
-void traceroute(SOCKET sockUdp, SOCKET sockIcmp, int maxHops, sockaddr_in destAddr);
+void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr);
 
 /// Вычисление контрольной суммы
 unsigned short calculateChecksum(unsigned short *buffer, int size);
@@ -76,34 +51,9 @@ int main()
 
     cout << "TRACEROUTE" << endl;
 
-    WORD wVersionRequested = MAKEWORD(2, 2);
-    WSADATA wsaData;
-
-    int err = WSAStartup(wVersionRequested, &wsaData);
-    if (err != 0) {
-        cerr << "Ошибка инициализации WSAStartup: " << err << endl;
-        return 1;
-    }
-
-    if (LOBYTE(wsaData.wVersion) != 2 || HIBYTE(wsaData.wVersion) != 2) {
-        cerr << "Не найдена нужная версия Winsock" << endl;
-        WSACleanup();
-        return 1;
-    }
-
-    cout << "Winsock 2.2 dll успешно найден" << endl;
-
-    SOCKET sockImcp = createIcmpSocket();
-    if (sockImcp == (unsigned long long) SOCKET_ERROR || sockImcp == INVALID_SOCKET) {
-        cerr << "Ошибка создания сокета IMCP" << sockImcp << endl;
-        WSACleanup();
-        return 1;
-    }
-
-    SOCKET sockUdp = createUdpSocket();
-    if (sockUdp == (unsigned long long) SOCKET_ERROR || sockUdp == INVALID_SOCKET) {
-        cerr << "Ошибка создания сокета UDP" << sockUdp << endl;
-        WSACleanup();
+    SOCKET sock = createSocket();
+    if (sock == (unsigned long long) SOCKET_ERROR || sock == INVALID_SOCKET) {
+        cerr << "Ошибка создания сокета" << sock << endl;
         return 1;
     }
 
@@ -115,9 +65,8 @@ int main()
 
     int hops = maxHops();
 
-    traceroute(sockUdp, sockImcp, hops, *destAddr);
+    traceroute(sock, hops, *destAddr);
 
-    WSACleanup();
     return 0;
 }
 
@@ -146,8 +95,25 @@ unsigned long getLocalIP() {
     return localAddr.sin_addr.s_addr;
 }
 
-SOCKET createIcmpSocket()
+SOCKET createSocket()
 {
+    WORD wVersionRequested = MAKEWORD(2, 2);
+    WSADATA wsaData;
+
+    int err = WSAStartup(wVersionRequested, &wsaData);
+    if (err != 0) {
+        cerr << "Ошибка инициализации WSAStartup: " << err << endl;
+        return INVALID_SOCKET;
+    }
+
+    if (LOBYTE(wsaData.wVersion) != 2 || HIBYTE(wsaData.wVersion) != 2) {
+        cerr << "Не найдена нужная версия Winsock" << endl;
+        WSACleanup();
+        return INVALID_SOCKET;
+    }
+
+    cout << "Winsock 2.2 dll успешно найден" << endl;
+
     SOCKET sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
     if (sock == INVALID_SOCKET) {
         int lastErr = WSAGetLastError();
@@ -156,6 +122,7 @@ SOCKET createIcmpSocket()
         return INVALID_SOCKET;
     }
 
+
     sockaddr_in localAddr;
     memset(&localAddr, 0, sizeof(localAddr));
     localAddr.sin_family = AF_INET;
@@ -165,40 +132,11 @@ SOCKET createIcmpSocket()
     char ipStr[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &(localAddr.sin_addr), ipStr, INET_ADDRSTRLEN);
 
-    if (bind(sock, reinterpret_cast<SOCKADDR*>(&localAddr), sizeof(localAddr)) == SOCKET_ERROR) {
+    if (::bind(sock, reinterpret_cast<SOCKADDR*>(&localAddr), sizeof(localAddr)) == SOCKET_ERROR) {
         int lastErr = WSAGetLastError();
         cerr << "Ошибка bind для SOCK_RAW: " << lastErr << endl;
         closesocket(sock);
-        return INVALID_SOCKET;
-    }
-
-    cout << "Сокет успешно создан и привязан к интерфейсу" << endl;
-    return sock;
-}
-
-SOCKET createUdpSocket()
-{
-    SOCKET sock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    if (sock == INVALID_SOCKET) {
-        int lastErr = WSAGetLastError();
-        cerr << "Ошибка создания сокета: " << lastErr << endl;
         WSACleanup();
-        return INVALID_SOCKET;
-    }
-
-    sockaddr_in localAddr;
-    memset(&localAddr, 0, sizeof(localAddr));
-    localAddr.sin_family = AF_INET;
-    localAddr.sin_port = htons(0);
-    localAddr.sin_addr.s_addr = getLocalIP();
-
-    char ipStr[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &(localAddr.sin_addr), ipStr, INET_ADDRSTRLEN);
-
-    if (bind(sock, reinterpret_cast<SOCKADDR*>(&localAddr), sizeof(localAddr)) == SOCKET_ERROR) {
-        int lastErr = WSAGetLastError();
-        cerr << "Ошибка bind для SOCK_DGRAM: " << lastErr << endl;
-        closesocket(sock);
         return INVALID_SOCKET;
     }
 
@@ -299,94 +237,125 @@ int maxHops()
     return hops;
 }
 
-void traceroute(SOCKET sockUdp, SOCKET sockIcmp, int maxHops, sockaddr_in destAddr)
+void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr)
 {
+    unsigned short processId = static_cast<unsigned short>(GetCurrentProcessId());
+    icmpPacket pac;
     DWORD timeout = 3000;
-    if (setsockopt(sockIcmp,
-                   SOL_SOCKET,
-                   SO_RCVTIMEO,
-                   reinterpret_cast<const char*>(&timeout),
-                   sizeof(timeout)) == SOCKET_ERROR) {
-        cerr << "Ошибка конфигурации таймаута ICMP: " << WSAGetLastError() << endl;
+
+    if (setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout)) == SOCKET_ERROR ||
+        setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, reinterpret_cast<const char*>(&timeout), sizeof(timeout)) == SOCKET_ERROR) {
+        cerr << "Не удалось установить таймауты сокета: " << WSAGetLastError() << endl;
         return;
     }
 
-    GUID guid;
-    CoCreateGuid(&guid);
+    const int bufferSize = 1024;
+    char recvBuffer[bufferSize];
 
-    char recvBuffer[1024];
-    sockaddr_in fromAddr;
-    int fromLen = sizeof(fromAddr);
-    USHORT basePort = 33434;
+    for (int i = 0; i < maxHops; i++) {
+        GUID guid;
+        CoCreateGuid(&guid);
 
-    char destIpStr[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &(destAddr.sin_addr), destIpStr, INET_ADDRSTRLEN);
-    cout << "\nТрассировка маршрута к " << destIpStr
-         << " с максимальным числом шагов " << maxHops << ":\n\n";
+        pac.header.type = 8;
+        pac.header.code = 0;
+        pac.header.checkSum = 0;
+        pac.header.id = processId;
+        pac.header.sequence = static_cast<unsigned short>(i);
+        pac.data = guid;
 
-    for (int ttl = 1; ttl < maxHops; ttl++) {
-        if (setsockopt(sockUdp,
-                       IPPROTO_IP,
-                       IP_TTL,
-                       reinterpret_cast<const char*>(&ttl),
-                       sizeof(ttl)) == SOCKET_ERROR) {
-            cerr << "Ошибка установки TTL: " << WSAGetLastError() << endl;
+        pac.header.checkSum = calculateChecksum(reinterpret_cast<unsigned short *>(&pac), sizeof(pac));
+
+        int ttl = i + 1;
+        if (setsockopt(sock, IPPROTO_IP, IP_TTL, reinterpret_cast<const char*>(&ttl), sizeof(ttl)) == SOCKET_ERROR) {
+            cerr << "Не удалось установить TTL: " << WSAGetLastError() << endl;
             return;
         }
 
-        destAddr.sin_port = htons(basePort + ttl);
-
-        time_point start = high_resolution_clock::now();
-        if (sendto(sockUdp, reinterpret_cast<const char*>(&guid), sizeof(GUID), 0,
-                   reinterpret_cast<sockaddr*>(&destAddr), sizeof(destAddr)) == SOCKET_ERROR) {
-            cerr << "Ошибка отправки пакета: " << WSAGetLastError() << endl;
-            return;
-        }
-
-        int res = recvfrom(sockIcmp, recvBuffer, sizeof(recvBuffer), 0, reinterpret_cast<sockaddr*>(&fromAddr), &fromLen);
-        time_point end = chrono::high_resolution_clock::now();
-        duration<double, milli> elapsed = end - start;
-
+        int res = sendto(sock, reinterpret_cast<const char *>(&pac), sizeof(pac), 0,
+                         reinterpret_cast<SOCKADDR *>(&destAddr), sizeof(destAddr));
         if (res == SOCKET_ERROR) {
-            int err = WSAGetLastError();
-            if (err == WSAETIMEDOUT) {
-                cout << ttl << "\t* * *\tВремя ожидания ответа истекло." << endl;
-                continue;
-            } else {
-                cerr << "Ошибка recvfrom: " << err << endl;
+            cerr << "Ошибка отправки: " << WSAGetLastError() << endl;
+            return;
+        }
+
+        sockaddr_in fromAddr;
+        int fromLen = sizeof(fromAddr);
+        bool stepCompleted = false;
+
+        while (!stepCompleted) {
+            int recvRes = recvfrom(sock, recvBuffer, bufferSize, 0, reinterpret_cast<SOCKADDR*>(&fromAddr), &fromLen);
+
+            if (recvRes == SOCKET_ERROR) {
+                if (WSAGetLastError() == WSAETIMEDOUT) {
+                    cout << ttl << "\t* * *" << endl;
+                    stepCompleted = true;
+                    continue;
+                } else {
+                    cerr << "Ошибка получения: " << WSAGetLastError() << endl;
+                    return;
+                }
+            }
+
+            if (recvRes < 20) continue;
+
+            unsigned char* ipHeader = reinterpret_cast<unsigned char*>(recvBuffer);
+            int ipHeaderLen = (ipHeader[0] & 0x0F) * 4;
+
+            if (recvRes < ipHeaderLen + 8) continue;
+
+            icmpHeader* icmpRes = reinterpret_cast<icmpHeader*>(recvBuffer + ipHeaderLen);
+
+            if (icmpRes->type == 0) {
+                if (icmpRes->id != processId || icmpRes->sequence != i) {
+                    continue;
+                }
+
+                char ipStr[INET_ADDRSTRLEN];
+                inet_ntop(AF_INET, &(fromAddr.sin_addr), ipStr, INET_ADDRSTRLEN);
+
+                char hostName[NI_MAXHOST];
+                int dnsRes = getnameinfo(reinterpret_cast<SOCKADDR*>(&fromAddr), sizeof(fromAddr),
+                                         hostName, NI_MAXHOST, nullptr, 0, 0);
+
+                if (dnsRes == 0 && strcmp(hostName, ipStr) != 0) {
+                    cout << ttl << "\t" << hostName << "\t(" << ipStr << ")";
+                } else {
+                    cout << ttl << "\t" << ipStr;
+                }
+                cout << "\tДостигнут целевой узел" << endl;
+
                 return;
             }
-        }
+            else if (icmpRes->type == 11) {
+                int innerIpHeaderOffset = ipHeaderLen + 8;
+                if (recvRes < innerIpHeaderOffset + 20) continue;
 
-        ipHeader* outIpHdr = reinterpret_cast<ipHeader*>(recvBuffer);
-        int outIpLen = outIpHdr->headerLength * 4;
+                unsigned char* innerIpHeader = reinterpret_cast<unsigned char*>(recvBuffer + innerIpHeaderOffset);
+                int innerIpHeaderLen = (innerIpHeader[0] & 0x0F) * 4;
 
-        icmpHeader* icmpHdr = reinterpret_cast<icmpHeader*>(recvBuffer + outIpLen);
+                if (recvRes < innerIpHeaderOffset + innerIpHeaderLen + 8) continue;
 
-        char responderIp[INET_ADDRSTRLEN];
-        inet_ntop(AF_INET, &(fromAddr.sin_addr), responderIp, INET_ADDRSTRLEN);
+                icmpHeader* originalIcmp = reinterpret_cast<icmpHeader*>(recvBuffer + innerIpHeaderOffset + innerIpHeaderLen);
 
-        cout << elapsed.count() << " мс\t" << responderIp;
+                if (originalIcmp->id != processId || originalIcmp->sequence != i) {
+                    continue;
+                }
 
-        if (icmpHdr->type == 11) {
-            char* innerPayload = reinterpret_cast<char*>(icmpHdr) + sizeof(icmpHeader);
-            ipHeader* innerIpHdr = reinterpret_cast<ipHeader*>(innerPayload);
-            int innerIpLen = innerIpHdr->headerLength * 4;
+                char ipStr[INET_ADDRSTRLEN];
+                inet_ntop(AF_INET, &(fromAddr.sin_addr), ipStr, INET_ADDRSTRLEN);
 
-            GUID* innerGuid = reinterpret_cast<GUID*>(innerPayload + innerIpLen + 8);
+                char hostName[NI_MAXHOST];
+                int dnsRes = getnameinfo(reinterpret_cast<SOCKADDR*>(&fromAddr), sizeof(fromAddr),
+                                         hostName, NI_MAXHOST, nullptr, 0, 0);
 
-            if (memcmp(innerGuid, &guid, sizeof(GUID)) == 0) {
-                cout << " [OK]" << endl;
-            } else {
-                cout << " [Чужой пакет]" << endl;
+                if (dnsRes == 0 && strcmp(hostName, ipStr) != 0) {
+                    cout << ttl << "\t" << hostName << "\t(" << ipStr << ")" << endl;
+                } else {
+                    cout << ttl << "\t" << ipStr << endl;
+                }
+
+                stepCompleted = true;
             }
-        }
-        else if (icmpHdr->type == 3 && icmpHdr->code == 3) {
-            cout << "\n\nТрассировка завершена. Цель достигнута." << endl;
-            break;
-        }
-        else {
-            cout << " (ICMP тип: " << (int)icmpHdr->type << ", код: " << (int)icmpHdr->code << ")" << endl;
         }
     }
 }

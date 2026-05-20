@@ -9,17 +9,15 @@
 using namespace std;
 using namespace std::chrono;
 
-/// Структура заголовка ICMP
+/// Заголовок ICMP
 struct icmpHeader
 {
     unsigned char type;
     unsigned char code;
     unsigned short checkSum;
-    unsigned short id;
-    unsigned short sequence;
 };
 
-/// Структура пакета ICMP
+/// ICMP-пакет
 struct icmpPacket
 {
     icmpHeader header;
@@ -57,6 +55,19 @@ int main()
     setlocale(LC_ALL, ".UTF8");
 
     cout << "TRACEROUTE" << endl;
+
+    WORD wVersionRequested = MAKEWORD(2, 2);
+    WSADATA wsaData;
+
+    int err = WSAStartup(wVersionRequested, &wsaData);
+    if (err != 0) {
+        return 1;
+    }
+
+    if (LOBYTE(wsaData.wVersion) != 2 || HIBYTE(wsaData.wVersion) != 2) {
+        WSACleanup();
+        return 1;
+    }
 
     SOCKET sock = createSocket();
     if (sock == (unsigned long long) SOCKET_ERROR || sock == INVALID_SOCKET) {
@@ -109,23 +120,6 @@ unsigned long getLocalIP()
 
 SOCKET createSocket()
 {
-    WORD wVersionRequested = MAKEWORD(2, 2);
-    WSADATA wsaData;
-
-    int err = WSAStartup(wVersionRequested, &wsaData);
-    if (err != 0) {
-        cerr << "Ошибка инициализации WSAStartup: " << err << endl;
-        return INVALID_SOCKET;
-    }
-
-    if (LOBYTE(wsaData.wVersion) != 2 || HIBYTE(wsaData.wVersion) != 2) {
-        cerr << "Не найдена нужная версия Winsock" << endl;
-        WSACleanup();
-        return INVALID_SOCKET;
-    }
-
-    cout << "Winsock 2.2 dll успешно найден" << endl;
-
     SOCKET sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
     if (sock == INVALID_SOCKET) {
         int lastErr = WSAGetLastError();
@@ -133,6 +127,10 @@ SOCKET createSocket()
         WSACleanup();
         return INVALID_SOCKET;
     }
+
+    // Переключение в неблокирующий режим
+    unsigned long mode = 1;
+    ioctlsocket(sock, FIONBIO, &mode);
 
     sockaddr_in localAddr;
     memset(&localAddr, 0, sizeof(localAddr));
@@ -143,7 +141,7 @@ SOCKET createSocket()
     char ipStr[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &(localAddr.sin_addr), ipStr, INET_ADDRSTRLEN);
 
-    if (::bind(sock, reinterpret_cast<SOCKADDR *>(&localAddr), sizeof(localAddr)) == SOCKET_ERROR) {
+    if (bind(sock, reinterpret_cast<SOCKADDR *>(&localAddr), sizeof(localAddr)) == SOCKET_ERROR) {
         int lastErr = WSAGetLastError();
         cerr << "Ошибка bind для SOCK_RAW: " << lastErr << endl;
         closesocket(sock);
@@ -151,7 +149,6 @@ SOCKET createSocket()
         return INVALID_SOCKET;
     }
 
-    cout << "Сокет успешно создан и привязан к интерфейсу" << endl;
     return sock;
 }
 
@@ -250,50 +247,38 @@ int maxHops()
 
 void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr)
 {
-    unsigned short processId = static_cast<unsigned short>(GetCurrentProcessId());
-    icmpPacket pac;
-    DWORD timeout = 3000;
+    DWORD sendTimeout = 3000;
 
     if (setsockopt(sock,        // Сокет
                    SOL_SOCKET,  // Уровень сокета
                    SO_SNDTIMEO, // Таймаут отправки
                    reinterpret_cast<const char *>(
-                       &timeout),   // Указатель на значение таймаута отправки
-                   sizeof(timeout)) // Размер таймаута
-            == SOCKET_ERROR
-        || setsockopt(sock,        // Сокет
-                      SOL_SOCKET,  // Уровень сокета
-                      SO_RCVTIMEO, // Таймаут получения
-                      reinterpret_cast<const char *>(
-                          &timeout),   // Указатель на значение таймаута отправки
-                      sizeof(timeout)) // Размер таймаута
-               == SOCKET_ERROR) {
-        cerr << "Не удалось установить таймауты сокета: " << WSAGetLastError() << endl;
+                       &sendTimeout),   // Указатель на значение таймаута отправки
+                   sizeof(sendTimeout)) // Размер таймаута
+        == SOCKET_ERROR) {
+        cerr << "Не удалось установить таймаут отправки: " << WSAGetLastError() << endl;
         return;
     }
 
-    const int bufferSize = 1024; // Размер буфера
-    char recvBuffer[bufferSize]; // Буфер
+    const int bufferSize = 20 + sizeof(icmpPacket); // Размер буфера
+    char recvBuffer[bufferSize];                    // Буфер
 
     for (int i = 0; i < maxHops; i++) {
-        // Созданте GUID для отправки
-        GUID guid;
-        CoCreateGuid(&guid);
+        GUID origGuid;
+        CoCreateGuid(&origGuid);
+        GUID recvedGuid;
 
-        // ICMP эхо-запрос
-        pac.header.type = 8;
-        pac.header.code = 0;
-
-        pac.header.checkSum = 0;
-        pac.header.id = processId;
-        pac.header.sequence = static_cast<unsigned short>(i);
-        pac.data = guid;
-
-        pac.header.checkSum = calculateChecksum(reinterpret_cast<unsigned short *>(&pac),
-                                                sizeof(pac));
-
+        // Формирование пакета на отправку
+        icmpPacket sendPack;
+        sendPack.header.type = 8;
+        sendPack.header.code = 0;
+        sendPack.header.checkSum = 0;
+        sendPack.data = origGuid;
+        sendPack.header.checkSum = calculateChecksum(reinterpret_cast<unsigned short *>(&sendPack),
+                                                     sizeof(sendPack));
         // Расчет времени жизни
         int ttl = i + 1;
+        cout << ttl;
 
         if (setsockopt(sock,                                 // Сокет
                        IPPROTO_IP,                           // Уровень IP
@@ -305,177 +290,225 @@ void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr)
             return;
         }
 
-        // Отправка данных
-        int res = sendto(sock,                                    // Сокет
-                         reinterpret_cast<const char *>(&pac),    // Указатель на буфер с данными
-                         sizeof(pac),                             // Размер буфера
-                         0,                                       // Флаги
-                         reinterpret_cast<SOCKADDR *>(&destAddr), // Указатель на адрес назначения
-                         sizeof(destAddr));                       // Размер адреса назначения
-        if (res == SOCKET_ERROR) {
-            cerr << "Ошибка отправки: " << WSAGetLastError() << endl;
-            return;
-        }
+        for (int j = 0; j < 3; j++) {
+            // Сохранение времени начала
+            auto start = high_resolution_clock::now();
 
-        // Время начала отправки
-        auto start = chrono::high_resolution_clock::now();
+            sockaddr_in fromAddr;
+            int fromLen = sizeof(fromAddr);
 
-        sockaddr_in fromAddr;
-        int fromLen = sizeof(fromAddr);
-        bool stepCompleted = false;
+            bool stepCompleted = false;
 
-        while (!stepCompleted) {
-            // Получение данных
-            int recvRes = recvfrom(sock,       // Сокет
-                                   recvBuffer, // Указаьель на буфер
-                                   bufferSize, // Размер буфера
-                                   0,          // Флаги
-                                   reinterpret_cast<SOCKADDR *>(
-                                       &fromAddr), // Указатель на адрес отправителя
-                                   &fromLen);      // Длина адреса отправителя
+            // Отправка
+            int res = sendto(sock,
+                             reinterpret_cast<const char *>(&sendPack),
+                             sizeof(sendPack),
+                             0,
+                             reinterpret_cast<SOCKADDR *>(&destAddr),
+                             sizeof(destAddr));
 
-            // Время получения
+            // Обработка ошибок отправки
+            if (res == SOCKET_ERROR) {
+                cerr << "Ошибка отправки: " << WSAGetLastError() << endl;
+                return;
+            }
+
+            // Длина адреса
+            int addrLen = sizeof(destAddr);
+
+            // Структура fd_set для хранения сокетов
+            fd_set fdSet;
+            FD_ZERO(&fdSet);      // Очистка
+            FD_SET(sock, &fdSet); // Добавление сокета в набор
+
+            // Таймаут получения
+            timeval recvTimeout;
+            recvTimeout.tv_sec = 3;  // с
+            recvTimeout.tv_usec = 0; // мкс
+
+            // Установка таймаута с помощью select
+            int selectRes = select(0, &fdSet, NULL, NULL, &recvTimeout);
+
+            int bytesRecved = 0;
+
+            if (selectRes > 0) {
+                bytesRecved = recvfrom(sock,       // сокет
+                                       recvBuffer, // указатель на буфер для приема данных
+                                       bufferSize, // размер буфера
+                                       0,          // флаги
+                                       reinterpret_cast<SOCKADDR *>(
+                                           &fromAddr), // указатель на адрес источника
+                                       &fromLen); // указатель на длину структуры адреса источнка
+            } else if (selectRes == 0) {
+                cerr << "\t*";
+
+            } else {
+                cerr << "Ошибка select: " << WSAGetLastError() << endl;
+            }
+
+            // Время принятия пакета
             auto end = high_resolution_clock::now();
 
-            // Промежуток времени в мс
-            auto durationMs = duration_cast<milliseconds>(
-                high_resolution_clock::duration(end - start));
+            // Разница
+            duration<double, milli> diff = end - start;
 
-            // Обработка ошибок
-            if (recvRes == SOCKET_ERROR) {
-                // Превышен таймаут
-                if (WSAGetLastError() == WSAETIMEDOUT) {
-                    cout << ttl << "\t* * *" << endl;
-                    stepCompleted = true;
-                    continue;
-                } else { // Отображение кода ошибки
-                    cerr << "Ошибка получения: " << WSAGetLastError() << endl;
-                    return;
+            if (bytesRecved > 0) {
+                int outerIpHeaderLen = (recvBuffer[0] & 0x0F) * 4; // Вычисление длины внешнего IPv4 заголовка
+
+                icmpPacket *recvPack = reinterpret_cast<icmpPacket *>(recvBuffer + outerIpHeaderLen);
+
+                // Эхо-ответ
+                if (recvPack->header.type == 0 && recvPack->header.code == 0) {
+
+                    // Получение GUID из ответа
+                    recvedGuid = recvPack->data;
+
+                    // Сравнение оригинального и полученного GUID
+                    if (IsEqualGUID(recvedGuid, origGuid)) {
+                        cout << "\t" << diff.count() << " мс";
+                        if (j == 2) {
+                            // IP-адрес узла
+                            char ipStr[INET_ADDRSTRLEN];
+                            inet_ntop(AF_INET, &(fromAddr.sin_addr), ipStr, INET_ADDRSTRLEN);
+
+                            // DNS-имя узла
+                            char hostName[NI_MAXHOST];
+                            int dnsRes = getnameinfo(reinterpret_cast<SOCKADDR *>(&fromAddr),
+                                                     sizeof(fromAddr),
+                                                     hostName,
+                                                     NI_MAXHOST,
+                                                     nullptr,
+                                                     0,
+                                                     0);
+                            if (dnsRes == 0 && strcmp(hostName, ipStr) != 0) {
+                                cout << "\t" << hostName << " (" << ipStr << ")";
+                            } else {
+                                cout << "\t" << ipStr;
+                            }
+                            cout << endl << "Достигнут целевой узел." << endl;
+                            return;
+                        }
+                    } else {
+                        cerr << "Получен чужой пакет";
+                        continue;
+                    }
                 }
-            }
-
-            // Валидация длины
-            // Заголовок IP-пакета равен 20 байт.
-            if (recvRes < 20)
-                continue;
-
-            // Заголовок IP-пакета
-            unsigned char *ipHeader = reinterpret_cast<unsigned char *>(recvBuffer);
-            int ipHeaderLen = (ipHeader[0] & 0x0F) * 4; // Длина заголовка
-
-            // Обработка ошибки
-            // ipHeaderLen + 8 - Минимально допустимый размер пакета
-            if (recvRes < ipHeaderLen + 8)
-                continue;
-
-            icmpHeader *icmpRes = reinterpret_cast<icmpHeader *>(recvBuffer + ipHeaderLen);
-
-            // Эхо-ответ
-            if (icmpRes->type == 0) {
-                // Проверка ID процесса и последовательности
-                if (icmpRes->id != processId || icmpRes->sequence != i) {
-                    continue;
+                // Обработка ошибок
+                else if (recvPack->header.type == 3) {
+                    cerr << "Ошибка: Адресат недостижим.\t";
+                    if (recvPack->header.code == 0) {
+                        cerr << "Сеть недоступна";
+                    } else if (recvPack->header.code == 1) {
+                        cerr << "Узел недоступен";
+                    } else if (recvPack->header.code == 2) {
+                        cerr << "Протокол недоступен";
+                    } else if (recvPack->header.code == 3) {
+                        cerr << "Порт недоступен";
+                    } else if (recvPack->header.code == 4) {
+                        cerr << "Необходима фрагментация, но не задан бит ее запрета";
+                    } else if (recvPack->header.code == 5) {
+                        cerr << "Ошибка на исходном маршруте";
+                    } else if (recvPack->header.code == 6) {
+                        cerr << "Сеть адресата неизвестна";
+                    } else if (recvPack->header.code == 7) {
+                        cerr << "Узел адресата неизвестен";
+                    } else if (recvPack->header.code == 8) {
+                        cerr << "Исходный узел изолирован";
+                    } else if (recvPack->header.code == 9) {
+                        cerr << "Сеть адресата административно изолирована";
+                    } else if (recvPack->header.code == 10) {
+                        cerr << "Узел адресата административно изолирован";
+                    } else if (recvPack->header.code == 11) {
+                        cerr << "Сеть недоступна для TOS";
+                    } else if (recvPack->header.code == 12) {
+                        cerr << "Узел недоступен для TOS";
+                    } else if (recvPack->header.code == 13) {
+                        cerr << "Связь административно запрещена фильтрацией";
+                    } else if (recvPack->header.code == 14) {
+                        cerr << "Нарушение приоритета узлов";
+                    } else if (recvPack->header.code == 15) {
+                        cerr << "Пренебрежение приоритетом узлов";
+                    } else {
+                        cerr << "Ошибка";
+                    }
+                } else if (recvPack->header.type == 4 && recvPack->header.code == 0) {
+                    cerr << "Ошибка.\tПодавление отправителя.";
+                } else if (recvPack->header.type == 5) {
+                    cerr << "Ошибка: Перенаправление.\t";
+                    if (recvPack->header.code == 0) {
+                        cerr << "Перенаправление для сети";
+                    } else if (recvPack->header.code == 1) {
+                        cerr << "Перенаправление на узел";
+                    } else if (recvPack->header.code == 2) {
+                        cerr << "Перенаправление на TOS и сеть";
+                    } else if (recvPack->header.code == 3) {
+                        cerr << "Перенаправление на TOS и узел";
+                    } else {
+                        cerr << "Ошибка";
+                    }
                 }
+                // Обработка нецелевого узла
+                else if (recvPack->header.type == 11) {
+                    char *innerIpHeaderPtr = recvBuffer + outerIpHeaderLen + 8;
+                    int innerIpLen = (innerIpHeaderPtr[0] & 0x0F) * 4;
+                    icmpPacket *origIcmpPack = reinterpret_cast<icmpPacket *>(innerIpHeaderPtr + innerIpLen);
+                    recvedGuid = origIcmpPack->data;
 
-                // IP-адрес узла
-                char ipStr[INET_ADDRSTRLEN];
-                inet_ntop(AF_INET, &(fromAddr.sin_addr), ipStr, INET_ADDRSTRLEN);
+                    // Сравнение оригинального и полученного GUID
+                    if (IsEqualGUID(recvedGuid, origGuid)) {
+                        cout << "\t" << diff.count() << " мс";
+                        if (j == 2) {
+                            // IP-адрес узла
+                            char ipStr[INET_ADDRSTRLEN];
+                            inet_ntop(AF_INET, &(fromAddr.sin_addr), ipStr, INET_ADDRSTRLEN);
 
-                // DNS-имя узла
-                char hostName[NI_MAXHOST];
-                int dnsRes = getnameinfo(reinterpret_cast<SOCKADDR *>(&fromAddr),
-                                         sizeof(fromAddr),
-                                         hostName,
-                                         NI_MAXHOST,
-                                         nullptr,
-                                         0,
-                                         0);
-
-                // Вывод данных
-                if (dnsRes == 0 && strcmp(hostName, ipStr) != 0) {
-                    cout << ttl << "\t" << hostName << "\t(" << ipStr << ")" << "\t("
-                         << durationMs.count() << " мс)";
+                            // DNS-имя узла
+                            char hostName[NI_MAXHOST];
+                            int dnsRes = getnameinfo(reinterpret_cast<SOCKADDR *>(&fromAddr),
+                                                     sizeof(fromAddr),
+                                                     hostName,
+                                                     NI_MAXHOST,
+                                                     nullptr,
+                                                     0,
+                                                     0);
+                            if (dnsRes == 0 && strcmp(hostName, ipStr) != 0) {
+                                cout << "\t" << hostName << " (" << ipStr << ")";
+                            } else {
+                                cout << "\t" << ipStr;
+                            }
+                        }
+                    } else {
+                        cerr << "Получен чужой пакет";
+                    }
+                } else if (recvPack->header.type == 12) {
+                    cerr << "Ошибка: Проблема параметра.\t";
+                    if (recvPack->header.code == 0) {
+                        cerr << "Неверный заголовок IP";
+                    } else if (recvPack->header.code == 1) {
+                        cerr << "Отсутствует требуемый параметр";
+                    } else {
+                        cerr << "Ошибка";
+                    }
                 } else {
-                    cout << ttl << "\t" << ipStr << "\t(" << durationMs.count() << " мс)";
+                    cerr << "Ошибка";
                 }
-                cout << "\tДостигнут целевой узел" << endl;
-
-                return;
-            } else if (icmpRes->type == 11) { // Промежуточный узел
-
-                // Получение смещения до начала вложенного IP-пакета
-                int innerIpHeaderOffset = ipHeaderLen + 8;
-                if (recvRes < innerIpHeaderOffset + 20)
-                    continue;
-
-                // Извлечение IP-заголовка из IMCP-ответа
-                unsigned char *innerIpHeader = reinterpret_cast<unsigned char *>(
-                    recvBuffer + innerIpHeaderOffset);
-
-                // Длина вложенного IP-заголовка
-                int innerIpHeaderLen = (innerIpHeader[0] & 0x0F) * 4;
-
-                // Вычисление минимального допустимого размера пакета
-                if (recvRes < innerIpHeaderOffset + innerIpHeaderLen + 8)
-                    continue;
-
-                // Заголовок оригитального ICMP-запроса
-                icmpHeader *originalIcmp = reinterpret_cast<icmpHeader *>(
-                    recvBuffer + innerIpHeaderOffset + innerIpHeaderLen);
-
-                // Проверка соответствия ID и последовательности
-                if (originalIcmp->id != processId || originalIcmp->sequence != i) {
-                    continue;
-                }
-
-                // IP-адрес узла
-                char ipStr[INET_ADDRSTRLEN];
-                inet_ntop(AF_INET, &(fromAddr.sin_addr), ipStr, INET_ADDRSTRLEN);
-
-                // DNS-имя узла
-                char hostName[NI_MAXHOST];
-                int dnsRes = getnameinfo(reinterpret_cast<SOCKADDR *>(&fromAddr),
-                                         sizeof(fromAddr),
-                                         hostName,
-                                         NI_MAXHOST,
-                                         nullptr,
-                                         0,
-                                         0);
-
-                // Вывод данных
-                if (dnsRes == 0 && strcmp(hostName, ipStr) != 0) {
-                    cout << ttl << "\t" << hostName << "\t(" << ipStr << ")" << "\t("
-                         << durationMs.count() << " мс)" << endl;
-                } else {
-                    cout << ttl << "\t" << ipStr << "\t(" << durationMs.count() << " мс)" << endl;
-                }
-
-                // Флаг завершения шага
-                stepCompleted = true;
             }
         }
+        cout << endl;
     }
 }
 
 unsigned short calculateChecksum(unsigned short *buffer, int size)
 {
     unsigned long cksum = 0;
-
-    // Суммируем каждые 2 байта (16 бит)
     while (size > 1) {
         cksum += *buffer++;
         size -= 2;
     }
-
-    // Если остался один байт, обрабатываем его как младший байт в слове
     if (size) {
         cksum += *(static_cast<unsigned char *>(static_cast<void *>(buffer)));
     }
-
-    // Сворачиваем 32-битную сумму в 16 бит (складываем старшие 16 бит с младшими)
     cksum = (cksum >> 16) + (cksum & 0xffff);
     cksum += (cksum >> 16);
-
-    // Возвращаем побитовое дополнение
     return static_cast<unsigned short>(~cksum);
 }

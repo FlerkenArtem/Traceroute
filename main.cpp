@@ -261,14 +261,8 @@ void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr)
             int bytesRecved;
 
             if (selectRes > 0) {
-
                 // Получение данных
-                bytesRecved = recvfrom(sock,
-                                       recvBuffer,
-                                       bufferSize,
-                                       0,
-                                       &fromAddr,
-                                       &fromAddrSize);
+                bytesRecved = recvfrom(sock, recvBuffer, bufferSize, 0, &fromAddr, &fromAddrSize);
 
                 if (bytesRecved != SOCKET_ERROR) {
                     int ipHeaderLen = (recvBuffer[0] & 0x0F) * 4; // Вычисление длины IPv4 заголовка
@@ -301,12 +295,12 @@ void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr)
 
                         // Вывод времени
                         if (diff.count() >= 1)
-                            cout << (int)diff.count() << "\t";
+                            cout << (int) diff.count() << "\t";
                         else
                             cout << "<1\t";
 
                         // Запись имени узла или его IP-адреса в строку
-                        if (!addrGetted){
+                        if (!addrGetted) {
                             if (dnsRes == 0 && strcmp(hostName, ipStr) != 0) {
                                 addrInfo += "\t";
                                 addrInfo += hostName;
@@ -395,7 +389,7 @@ void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr)
                     }
                 }
 
-            // Обработка истечения таймаута
+                // Обработка истечения таймаута
             } else if (selectRes == 0) {
                 cout << "*\t";
             } else {

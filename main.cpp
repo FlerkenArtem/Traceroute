@@ -247,16 +247,19 @@ int maxHops()
 
 void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr)
 {
-    // Установка размера буфера: IPv4-заголовок (20) + ICMP-пакет
-    // const int bufferSize = 20 + sizeof(icmpPacket);
-
+    // Установка размера буфера
     const int bufferSize = 1024;
 
     // Создание буфера
     char *recvBuffer = new char[bufferSize];
 
+    // Адрес отправителя
     sockaddr fromAddr;
+
+    // Размер адреса отправителя
     int fromAddrSize = sizeof(fromAddr);
+
+    // Достижение цели
     bool destination = false;
 
     for (int ttl = 1; ttl <= maxHops; ttl++) {
@@ -278,6 +281,8 @@ void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr)
         // Настройка TTL
         setsockopt(sock, IPPROTO_IP, IP_TTL, reinterpret_cast<const char *>(&ttl), sizeof(ttl));
 
+        bool addrGetted = false;
+        string addrInfo;
         for (int trying = 0; trying < 3; trying++) {
             // Время начала отправки
             auto start = high_resolution_clock::now();
@@ -290,8 +295,11 @@ void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr)
                                  reinterpret_cast<sockaddr *>(&destAddr),
                                  socklen_t(sizeof(destAddr)));
 
-            // Длина адреса
-            int addrLen = sizeof(destAddr);
+            // Обрпаботка ошибок отправки
+            if (sendRes == SOCKET_ERROR) {
+                cerr << "Ошибка отправки: " << WSAGetLastError() << endl;
+                continue;
+            }
 
             // Структура fd_set для хранения сокетов
             fd_set fdSet;
@@ -306,21 +314,39 @@ void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr)
             // Установка таймаута с помощью select
             int selectRes = select(0, &fdSet, NULL, NULL, &recvTimeout);
 
+            // Полученные байты
             int bytesRecved;
 
             if (selectRes > 0) {
-                bytesRecved = recvfrom(sock, recvBuffer, bufferSize, 0, &fromAddr, &fromAddrSize);
+
+                // Получение данных
+                bytesRecved = recvfrom(sock,
+                                       recvBuffer,
+                                       bufferSize,
+                                       0,
+                                       &fromAddr,
+                                       &fromAddrSize);
+
                 if (bytesRecved != SOCKET_ERROR) {
                     int ipHeaderLen = (recvBuffer[0] & 0x0F) * 4; // Вычисление длины IPv4 заголовка
 
+                    // Полученный ICMP-пакет
                     icmpPacket *recvPack = reinterpret_cast<icmpPacket *>(recvBuffer + ipHeaderLen);
+
+                    // Время окончания
                     auto end = high_resolution_clock::now();
+
+                    // Разница
                     auto diff = duration<double, milli>(end - start);
+
+                    // Получение IP-адреса в текстовом формате
                     char ipStr[INET_ADDRSTRLEN] = {0};
+
                     if (fromAddr.sa_family == AF_INET) {
                         sockaddr_in *ipv4 = reinterpret_cast<sockaddr_in *>(&fromAddr);
                         inet_ntop(AF_INET, &(ipv4->sin_addr), ipStr, INET_ADDRSTRLEN);
 
+                        // Получение DNS-имени хоста
                         char hostName[NI_MAXHOST];
                         int dnsRes = getnameinfo(reinterpret_cast<SOCKADDR *>(&fromAddr),
                                                  sizeof(fromAddr),
@@ -329,22 +355,38 @@ void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr)
                                                  nullptr,
                                                  0,
                                                  0);
+
+                        // Вывод времени
                         if (diff.count() >= 1)
                             cout << (int)diff.count() << "\t";
                         else
                             cout << "<1\t";
-                        if (trying == 2) {
+
+                        // Запись имени узла или его IP-адреса в строку
+                        if (!addrGetted){
                             if (dnsRes == 0 && strcmp(hostName, ipStr) != 0) {
-                                cout << "\t" << hostName << "\t(" << ipStr << ")";
+                                addrInfo += "\t";
+                                addrInfo += hostName;
+                                addrInfo += "\t(";
+                                addrInfo += ipStr;
+                                addrInfo += ")";
                             } else {
-                                cout << "\t" << ipStr;
+                                addrInfo += "\t";
+                                addrInfo += ipStr;
                             }
                         }
 
+                        // Получен адрес
+                        addrGetted = true;
+
+                        // Проверка достижения цели
                         if (ipv4->sin_addr.s_addr == destAddr.sin_addr.s_addr) {
                             destination = true;
                         }
-                    } else if (recvPack->header.type == 3) {
+                    }
+
+                    // Обработка ошибок
+                    else if (recvPack->header.type == 3) {
                         cerr << "Ошибка: Адресат недостижим.\t";
                         if (recvPack->header.code == 0) {
                             cerr << "Сеть недоступна";
@@ -409,14 +451,23 @@ void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr)
                         cerr << "Ошибка";
                     }
                 }
+
+            // Обработка истечения таймаута
             } else if (selectRes == 0) {
                 cout << "*\t";
             } else {
                 delete[] recvBuffer;
                 return;
             }
+
+            // Вывод адреса после последней попытки
+            if (addrGetted && trying == 2) {
+                cout << addrInfo;
+            }
         }
         cout << endl;
+
+        // Вывод информации о достижении целевого узла
         if (destination) {
             cout << "\tДостигнут целевой узел" << endl;
             cout << endl;

@@ -311,6 +311,9 @@ void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr)
             if (selectRes > 0) {
                 bytesRecved = recvfrom(sock, recvBuffer, bufferSize, 0, &fromAddr, &fromAddrSize);
                 if (bytesRecved != SOCKET_ERROR) {
+                    int ipHeaderLen = (recvBuffer[0] & 0x0F) * 4; // Вычисление длины IPv4 заголовка
+
+                    icmpPacket *recvPack = reinterpret_cast<icmpPacket *>(recvBuffer + ipHeaderLen);
                     auto end = high_resolution_clock::now();
                     auto diff = duration<double, milli>(end - start);
                     char ipStr[INET_ADDRSTRLEN] = {0};
@@ -341,6 +344,69 @@ void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr)
                         if (ipv4->sin_addr.s_addr == destAddr.sin_addr.s_addr) {
                             destination = true;
                         }
+                    } else if (recvPack->header.type == 3) {
+                        cerr << "Ошибка: Адресат недостижим.\t";
+                        if (recvPack->header.code == 0) {
+                            cerr << "Сеть недоступна";
+                        } else if (recvPack->header.code == 1) {
+                            cerr << "Узел недоступен";
+                        } else if (recvPack->header.code == 2) {
+                            cerr << "Протокол недоступен";
+                        } else if (recvPack->header.code == 3) {
+                            cerr << "Порт недоступен";
+                        } else if (recvPack->header.code == 4) {
+                            cerr << "Необходима фрагментация, но не задан бит ее запрета";
+                        } else if (recvPack->header.code == 5) {
+                            cerr << "Ошибка на исходном маршруте";
+                        } else if (recvPack->header.code == 6) {
+                            cerr << "Сеть адресата неизвестна";
+                        } else if (recvPack->header.code == 7) {
+                            cerr << "Узел адресата неизвестен";
+                        } else if (recvPack->header.code == 8) {
+                            cerr << "Исходный узел изолирован";
+                        } else if (recvPack->header.code == 9) {
+                            cerr << "Сеть адресата административно изолирована";
+                        } else if (recvPack->header.code == 10) {
+                            cerr << "Узел адресата административно изолирован";
+                        } else if (recvPack->header.code == 11) {
+                            cerr << "Сеть недоступна для TOS";
+                        } else if (recvPack->header.code == 12) {
+                            cerr << "Узел недоступен для TOS";
+                        } else if (recvPack->header.code == 13) {
+                            cerr << "Связь административно запрещена фильтрацией";
+                        } else if (recvPack->header.code == 14) {
+                            cerr << "Нарушение приоритета узлов";
+                        } else if (recvPack->header.code == 15) {
+                            cerr << "Пренебрежение приоритетом узлов";
+                        } else {
+                            cerr << "Ошибка";
+                        }
+                    } else if (recvPack->header.type == 4 && recvPack->header.code == 0) {
+                        cerr << "Ошибка.\tПодавление отправителя.";
+                    } else if (recvPack->header.type == 5) {
+                        cerr << "Ошибка: Перенаправление.\t";
+                        if (recvPack->header.code == 0) {
+                            cerr << "Перенаправление для сети";
+                        } else if (recvPack->header.code == 1) {
+                            cerr << "Перенаправление на узел";
+                        } else if (recvPack->header.code == 2) {
+                            cerr << "Перенаправление на TOS и сеть";
+                        } else if (recvPack->header.code == 3) {
+                            cerr << "Перенаправление на TOS и узел";
+                        } else {
+                            cerr << "Ошибка";
+                        }
+                    } else if (recvPack->header.type == 12) {
+                        cerr << "Ошибка: Проблема параметра.\t";
+                        if (recvPack->header.code == 0) {
+                            cerr << "Неверный заголовок IP";
+                        } else if (recvPack->header.code == 1) {
+                            cerr << "Отсутствует требуемый параметр";
+                        } else {
+                            cerr << "Ошибка";
+                        }
+                    } else {
+                        cerr << "Ошибка";
                     }
                 }
             } else if (selectRes == 0) {

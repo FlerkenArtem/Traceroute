@@ -36,7 +36,7 @@ optional<sockaddr_in> connectAddr();
 int maxHops();
 
 /// Определение маршрута
-void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr);
+void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops = 30);
 
 /// Вычисление контрольной суммы
 unsigned short calculateChecksum(unsigned short *buffer, int size);
@@ -76,7 +76,7 @@ int main()
 
     int hops = maxHops();
 
-    traceroute(sock, hops, *destAddr);
+    traceroute(sock, *destAddr, hops);
 
     return 0;
 }
@@ -188,7 +188,7 @@ int maxHops()
     return hops;
 }
 
-void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr)
+void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
 {
     // Установка размера буфера
     const int bufferSize = 1024;
@@ -407,6 +407,13 @@ void traceroute(SOCKET sock, int maxHops, sockaddr_in destAddr)
         // Вывод информации о достижении целевого узла
         if (destination) {
             cout << "\tДостигнут целевой узел" << endl;
+            cout << endl;
+            break;
+        }
+        // Вывод информации о том, что целевой узел
+        // не был достигнут за отведенное число шагов
+        else if (ttl == maxHops) {
+            cout << "Целевой узел не был достигнут за " << maxHops << " шагов." << endl;
             cout << endl;
             break;
         }

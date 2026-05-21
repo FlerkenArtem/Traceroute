@@ -4,7 +4,6 @@
 #include <chrono>
 #include <iostream>
 #include <optional>
-#include <regex>
 
 using namespace std;
 using namespace std::chrono;
@@ -30,14 +29,8 @@ unsigned long getLocalIP();
 /// Создание сокета
 SOCKET createSocket();
 
-/// Подключение сокета
+/// Подключение сокета к адресу
 optional<sockaddr_in> connectAddr();
-
-/// Подключение сокета по IP-адресу
-sockaddr_in connectIpAddr();
-
-/// Подключение сокета по DNS-имени
-optional<sockaddr_in> connectDnsAddr();
 
 /// Получение максимального числа шагов
 int maxHops();
@@ -154,68 +147,18 @@ SOCKET createSocket()
 
 optional<sockaddr_in> connectAddr()
 {
-    optional<sockaddr_in> conn;
-    int type = 0;
-
-    while (type != 1 && type != 2) {
-        cout << "Выберите тип соединения: " << endl;
-        cout << "1. IP" << endl;
-        cout << "2. DNS" << endl;
-        cin >> type;
-        if (type != 1 && type != 2) {
-            cout << "Ошибка при вводе типа подключения.";
-        }
-    }
-
-    if (type == 1) {
-        conn = connectIpAddr();
-    } else if (type == 2) {
-        conn = connectDnsAddr();
-    } else {
-        cerr << "Не выбран тип соединения, невозможно подключиться";
-    }
-
-    return conn;
-}
-
-sockaddr_in connectIpAddr()
-{
-    const regex ipPattern("^((25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\\.){3}"
-                          "(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)$");
-    string ip;
-
-    while (true) {
-        cout << "Введите IP-адрес: ";
-        cin >> ip;
-        if (!regex_match(ip, ipPattern)) {
-            cout << "IP-адрес введен неверно" << endl;
-            continue;
-        }
-        break;
-    }
-
-    sockaddr_in destAddr;
-    destAddr.sin_family = AF_INET;                    // IPv4
-    destAddr.sin_port = 0;                            // Выбор случайного порта
-    destAddr.sin_addr.s_addr = inet_addr(ip.c_str()); // Установка IP-адреса
-
-    return destAddr;
-}
-
-optional<sockaddr_in> connectDnsAddr()
-{
     string hostname;
     sockaddr_in destAddr;
 
-    cout << "Введите DNS-имя: ";
+    cout << "Введите адрес: ";
     cin >> hostname;
 
     struct addrinfo hints;
     struct addrinfo *result = nullptr;
 
     ZeroMemory(&hints, sizeof(hints));
-    hints.ai_family = AF_INET;        // IPv4
-    hints.ai_socktype = SOCK_RAW;     // Сырой сокет
+    hints.ai_family = AF_INET; // IPv4
+    hints.ai_socktype = SOCK_RAW;
     hints.ai_protocol = IPPROTO_ICMP; // ICMP
 
     int dnsResult = getaddrinfo(hostname.c_str(), nullptr, &hints, &result);

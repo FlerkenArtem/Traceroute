@@ -63,7 +63,7 @@ int main()
     }
 
     SOCKET sock = createSocket();
-    if (sock == (unsigned long long) SOCKET_ERROR || sock == INVALID_SOCKET) {
+    if (sock == INVALID_SOCKET) {
         cerr << "Ошибка создания сокета" << sock << endl;
         return 1;
     }

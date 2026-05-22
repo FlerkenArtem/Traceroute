@@ -134,14 +134,6 @@ SOCKET createSocket()
     char ipStr[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &(localAddr.sin_addr), ipStr, INET_ADDRSTRLEN);
 
-    if (bind(sock, reinterpret_cast<SOCKADDR *>(&localAddr), sizeof(localAddr)) == SOCKET_ERROR) {
-        int lastErr = WSAGetLastError();
-        cerr << "Ошибка bind для SOCK_RAW: " << lastErr << endl;
-        closesocket(sock);
-        WSACleanup();
-        return INVALID_SOCKET;
-    }
-
     return sock;
 }
 

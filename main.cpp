@@ -177,15 +177,17 @@ optional<sockaddr_in> connectAddr()
 
 int maxHops()
 {
-    int hops = 0;
-    while (hops <= 0) {
+    while (true) {
+        int hops = 0;
         cout << "Введите максимальное число шагов: ";
-        cin >> hops;
-        if (hops <= 0) {
+        if (cin >> hops && hops > 0) {
+            return hops;
+        } else {
+            cin.clear();
+            cin.ignore(numeric_limits<streamsize>::max(), '\n');
             cout << "Введено некррекное число шагов. Введите число больше 0.";
         }
     }
-    return hops;
 }
 
 void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)

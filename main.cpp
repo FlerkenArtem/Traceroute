@@ -320,8 +320,7 @@ void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
 
                             destination = true;
                         }
-                    }
-                    else if (recvPack->header.type == 11) {
+                    } else if (recvPack->header.type == 11) {
                         if (fromAddr.sa_family == AF_INET) {
                             sockaddr_in *ipv4 = reinterpret_cast<sockaddr_in *>(&fromAddr);
                             inet_ntop(AF_INET, &(ipv4->sin_addr), ipStr, INET_ADDRSTRLEN);
@@ -331,7 +330,9 @@ void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
 
                             if (outerIcmpLen >= 48) {
                                 // Вложенный IP-залоговок
-                                unsigned char* innerIpHeader = reinterpret_cast<unsigned char*>(recvPack) + 8;
+                                unsigned char *innerIpHeader = reinterpret_cast<unsigned char *>(
+                                                                   recvPack)
+                                                               + 8;
 
                                 // Длина вложенного IP-заголовка
                                 int innerIpHeaderLen = (innerIpHeader[0] & 0x0F) * 4;
@@ -339,12 +340,14 @@ void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
                                 // Проверяем, что буфер физически содержит весь GUID
                                 int totalGuidOffset = 8 + innerIpHeaderLen + 4 + sizeof(GUID);
                                 if (outerIcmpLen >= totalGuidOffset) {
-                                    unsigned char* recvedGuid = innerIpHeader + innerIpHeaderLen + 4;
+                                    unsigned char *recvedGuid = innerIpHeader + innerIpHeaderLen
+                                                                + 4;
 
                                     if (memcmp(&origGuid, recvedGuid, sizeof(GUID)) == 0) {
                                         // Получение DNS-имени хоста
                                         char hostName[NI_MAXHOST];
-                                        int dnsRes = getnameinfo(reinterpret_cast<SOCKADDR *>(&fromAddr),
+                                        int dnsRes = getnameinfo(reinterpret_cast<SOCKADDR *>(
+                                                                     &fromAddr),
                                                                  sizeof(fromAddr),
                                                                  hostName,
                                                                  NI_MAXHOST,
@@ -387,7 +390,6 @@ void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
                             }
                         }
                     }
-
 
                     // Обработка ошибок
                     else if (recvPack->header.type == 3) {
@@ -490,7 +492,6 @@ void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
     WSACleanup();
 
     closesocket(sock);
-
 }
 
 unsigned short calculateChecksum(unsigned short *buffer, int size)

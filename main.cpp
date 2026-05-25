@@ -278,6 +278,12 @@ void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
                     // Получение IP-адреса в текстовом формате
                     char ipStr[INET_ADDRSTRLEN] = {0};
 
+                    // Проверка целостности пакета
+                    if (bytesRecved <= ipHeaderLen || ipHeaderLen < 20) {
+                        cout << "*\t";
+                        continue;
+                    }
+
                     if (recvPack->header.type == 0 && recvPack->header.code == 0) {
                         if (fromAddr.sin_family == AF_INET) {
                             GUID recvedGuid = recvPack->data;

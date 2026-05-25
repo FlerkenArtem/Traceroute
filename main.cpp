@@ -191,10 +191,10 @@ void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
     char *recvBuffer = new char[bufferSize];
 
     // Адрес отправителя
-    sockaddr fromAddr{};
+    sockaddr_in fromAddr{};
 
     // Размер адреса отправителя
-    int fromAddrSize = sizeof(fromAddr);
+    socklen_t fromAddrSize = sizeof(fromAddr);
 
     // Достижение цели
     bool destination = false;
@@ -256,7 +256,12 @@ void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
 
             if (selectRes > 0) {
                 // Получение данных
-                bytesRecved = recvfrom(sock, recvBuffer, bufferSize, 0, &fromAddr, &fromAddrSize);
+                bytesRecved = recvfrom(sock,
+                                       recvBuffer,
+                                       bufferSize,
+                                       0,
+                                       reinterpret_cast<sockaddr *>(&fromAddr),
+                                       &fromAddrSize);
 
                 if (bytesRecved != SOCKET_ERROR) {
                     int ipHeaderLen = (recvBuffer[0] & 0x0F) * 4; // Вычисление длины IPv4 заголовка
@@ -274,11 +279,10 @@ void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
                     char ipStr[INET_ADDRSTRLEN] = {0};
 
                     if (recvPack->header.type == 0 && recvPack->header.code == 0) {
-                        if (fromAddr.sa_family == AF_INET) {
-                            sockaddr_in *ipv4 = reinterpret_cast<sockaddr_in *>(&fromAddr);
+                        if (fromAddr.sin_family == AF_INET) {
                             GUID recvedGuid = recvPack->data;
 
-                            inet_ntop(AF_INET, &(ipv4->sin_addr), ipStr, INET_ADDRSTRLEN);
+                            inet_ntop(AF_INET, &(fromAddr.sin_addr), ipStr, INET_ADDRSTRLEN);
 
                             // Проверка соответствия оригинального и полученного GUID
                             if (memcmp(&origGuid, &recvedGuid, sizeof(GUID)) == 0) {
@@ -321,9 +325,8 @@ void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
                             destination = true;
                         }
                     } else if (recvPack->header.type == 11) {
-                        if (fromAddr.sa_family == AF_INET) {
-                            sockaddr_in *ipv4 = reinterpret_cast<sockaddr_in *>(&fromAddr);
-                            inet_ntop(AF_INET, &(ipv4->sin_addr), ipStr, INET_ADDRSTRLEN);
+                        if (fromAddr.sin_family == AF_INET) {
+                            inet_ntop(AF_INET, &(fromAddr.sin_addr), ipStr, INET_ADDRSTRLEN);
 
                             // Вычисляем смещение до вложенного IP-заголовка
                             int outerIcmpLen = bytesRecved - ipHeaderLen;

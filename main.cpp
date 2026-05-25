@@ -487,11 +487,10 @@ void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
             break;
         }
     }
+
     delete[] recvBuffer;
-
-    WSACleanup();
-
     closesocket(sock);
+    WSACleanup();
 }
 
 unsigned short calculateChecksum(unsigned short *buffer, int size)

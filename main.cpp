@@ -336,16 +336,17 @@ void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
 
                             // Вычисляем смещение до вложенного IP-заголовка
                             int outerIcmpLen = bytesRecved - ipHeaderLen;
+                            // Вложенный IP-залоговок
+                            unsigned char *innerIpHeader = reinterpret_cast<unsigned char *>(
+                                                               recvPack)
+                                                           + 8;
 
-                            if (outerIcmpLen >= 48) {
-                                // Вложенный IP-залоговок
-                                unsigned char *innerIpHeader = reinterpret_cast<unsigned char *>(
-                                                                   recvPack)
-                                                               + 8;
+                            // Длина вложенного IP-заголовка
+                            int innerIpHeaderLen = (innerIpHeader[0] & 0x0F) * 4;
 
-                                // Длина вложенного IP-заголовка
-                                int innerIpHeaderLen = (innerIpHeader[0] & 0x0F) * 4;
-
+                            if ((unsigned long long) outerIcmpLen
+                                >= sizeof(icmpHeader) + innerIpHeaderLen + sizeof(icmpHeader)
+                                       + sizeof(GUID)) {
                                 // Проверяем, что буфер физически содержит весь GUID
                                 int totalGuidOffset = 8 + innerIpHeaderLen + 4 + sizeof(GUID);
                                 if (outerIcmpLen >= totalGuidOffset) {

@@ -254,6 +254,11 @@ void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
             // Полученные байты
             int bytesRecved;
 
+            if (!FD_ISSET(sock, &fdSet)) {
+                break;
+                cout << "\t**";
+            }
+
             if (selectRes > 0) {
                 // Получение данных
                 bytesRecved = recvfrom(sock,

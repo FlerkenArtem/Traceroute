@@ -189,6 +189,21 @@ int maxHops()
 
 void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
 {
+    char hostBuf[NI_MAXHOST];
+    char ipBuf[INET_ADDRSTRLEN];
+
+    getnameinfo((sockaddr *) &destAddr,
+                sizeof(destAddr),
+                hostBuf,
+                sizeof(hostBuf),
+                nullptr,
+                0,
+                NI_NUMERICSERV);
+
+    cout << "Трассировка маршрута к " << hostBuf << " ["
+         << inet_ntop(AF_INET, &destAddr.sin_addr, ipBuf, sizeof(ipBuf)) << "] " << endl
+         << "с максимальным числом прыжков " << maxHops << ":" << endl;
+
     // Установка размера буфера
     const int bufferSize = 1024;
 

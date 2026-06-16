@@ -1,9 +1,10 @@
-#include <winsock2.h>
-#include <ws2tcpip.h>
-#include <combaseapi.h>
 #include <chrono>
+#include <combaseapi.h>
 #include <iostream>
 #include <optional>
+#include <vector>
+#include <winsock2.h>
+#include <ws2tcpip.h>
 
 using namespace std;
 using namespace std::chrono;
@@ -188,7 +189,7 @@ void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
     const int bufferSize = 1024;
 
     // Создание буфера
-    char *recvBuffer = new char[bufferSize];
+    vector<char> recvBuffer(bufferSize);
 
     // Адрес отправителя
     sockaddr_in fromAddr{};
@@ -255,14 +256,14 @@ void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
             int bytesRecved;
 
             if (!FD_ISSET(sock, &fdSet)) {
-                break;
-                cout << "\t**";
+                cout << "*\t";
+                continue;
             }
 
             if (selectRes > 0) {
                 // Получение данных
                 bytesRecved = recvfrom(sock,
-                                       recvBuffer,
+                                       recvBuffer.data(),
                                        bufferSize,
                                        0,
                                        reinterpret_cast<sockaddr *>(&fromAddr),
@@ -272,7 +273,8 @@ void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
                     int ipHeaderLen = (recvBuffer[0] & 0x0F) * 4; // Вычисление длины IPv4 заголовка
 
                     // Полученный ICMP-пакет
-                    icmpPacket *recvPack = reinterpret_cast<icmpPacket *>(recvBuffer + ipHeaderLen);
+                    icmpPacket *recvPack = reinterpret_cast<icmpPacket *>(recvBuffer.data()
+                                                                          + ipHeaderLen);
 
                     // Время окончания
                     auto end = high_resolution_clock::now();
@@ -477,7 +479,6 @@ void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
             } else if (selectRes == 0) {
                 cout << "*\t";
             } else {
-                delete[] recvBuffer;
                 return;
             }
 
@@ -503,7 +504,6 @@ void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
         }
     }
 
-    delete[] recvBuffer;
     closesocket(sock);
     WSACleanup();
 }

@@ -9,6 +9,25 @@
 using namespace std;
 using namespace std::chrono;
 
+#pragma pack(push, 1)
+
+/// Заголовок IP
+struct ipHeader
+{
+    unsigned char len : 4;
+    unsigned char version : 4;
+    unsigned char tos;
+    unsigned short totalLen;
+    unsigned short id;
+    unsigned short flags;
+    unsigned char ttl;
+    unsigned char proto;
+    unsigned short checkSum;
+
+    unsigned int srcIp;
+    unsigned int destIp;
+};
+
 /// Заголовок ICMP
 struct icmpHeader
 {
@@ -23,6 +42,30 @@ struct icmpPacket
     icmpHeader header;
     GUID data;
 };
+
+/// Структура с дополнительными данными о пакете
+struct packData
+{
+    GUID recvedGuid;
+    time_point<steady_clock> sendTime = {};
+    time_point<steady_clock> recvTime = {};
+
+    bool sended = false;
+    bool recved = false;
+    bool timeout = false;
+    bool error = false;
+};
+
+/// Структура пакета ICMP с ошибкой
+struct icmpErrorPacket
+{
+    icmpHeader icmpHdr;
+    unsigned int restOfIcmp;
+    ipHeader origIpHdr;
+    GUID origData;
+};
+
+#pragma pack(pop)
 
 /// Получение локального IP адреса
 unsigned long getLocalIP();
@@ -41,6 +84,9 @@ void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops = 30);
 
 /// Вычисление контрольной суммы
 unsigned short calculateChecksum(unsigned short *buffer, int size);
+
+/// Обработка ошибок ICMP
+void errors(unsigned char charType, unsigned char charCode);
 
 /// Точка входа в программу
 int main()
@@ -213,11 +259,10 @@ void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
         sendPack.header.code = 0;
         sendPack.header.checkSum = 0;
         sendPack.data = origGuid;
-        sendPack.header.checkSum = calculateChecksum(reinterpret_cast<unsigned short *>(&sendPack),
-                                                     sizeof(sendPack));
+        sendPack.header.checkSum = calculateChecksum((unsigned short *) &sendPack, sizeof(sendPack));
 
         // Настройка TTL
-        setsockopt(sock, IPPROTO_IP, IP_TTL, reinterpret_cast<const char *>(&ttl), sizeof(ttl));
+        setsockopt(sock, IPPROTO_IP, IP_TTL, (const char *) &ttl, sizeof(ttl));
 
         bool addrGetted = false;
         string addrInfo;
@@ -227,10 +272,10 @@ void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
 
             // Отправка
             int sendRes = sendto(sock,
-                                 reinterpret_cast<const char *>(&sendPack),
+                                 (const char *) &sendPack,
                                  sizeof(sendPack),
                                  0,
-                                 reinterpret_cast<sockaddr *>(&destAddr),
+                                 (sockaddr *) &destAddr,
                                  socklen_t(sizeof(destAddr)));
 
             // Обрпаботка ошибок отправки
@@ -246,7 +291,7 @@ void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
 
             // Таймаут получения
             timeval recvTimeout{};
-            recvTimeout.tv_sec = 3;  // с
+            recvTimeout.tv_sec = 1;  // с
             recvTimeout.tv_usec = 0; // мкс
 
             // Установка таймаута с помощью select
@@ -261,219 +306,153 @@ void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
             }
 
             if (selectRes > 0) {
-                // Получение данных
-                bytesRecved = recvfrom(sock,
-                                       recvBuffer.data(),
-                                       bufferSize,
-                                       0,
-                                       reinterpret_cast<sockaddr *>(&fromAddr),
-                                       &fromAddrSize);
+                int recvError = 0;
 
-                if (bytesRecved != SOCKET_ERROR) {
-                    int ipHeaderLen = (recvBuffer[0] & 0x0F) * 4; // Вычисление длины IPv4 заголовка
+                do {
+                    // Получение данных
+                    bytesRecved = recvfrom(sock,
+                                           recvBuffer.data(),
+                                           bufferSize,
+                                           0,
+                                           (sockaddr *) &fromAddr,
+                                           &fromAddrSize);
 
-                    // Полученный ICMP-пакет
-                    icmpPacket *recvPack = reinterpret_cast<icmpPacket *>(recvBuffer.data()
-                                                                          + ipHeaderLen);
+                    if (bytesRecved != SOCKET_ERROR) {
+                        int ipHeaderLen = (recvBuffer[0] & 0x0F)
+                                          * 4; // Вычисление длины IPv4 заголовка
 
-                    // Время окончания
-                    auto end = high_resolution_clock::now();
+                        // Полученный ICMP-пакет
+                        icmpPacket *recvPack = (icmpPacket *) (recvBuffer.data() + ipHeaderLen);
 
-                    // Разница
-                    auto diff = duration<double, milli>(end - start);
+                        // Время окончания
+                        auto end = high_resolution_clock::now();
 
-                    // Получение IP-адреса в текстовом формате
-                    char ipStr[INET_ADDRSTRLEN] = {0};
+                        // Разница
+                        auto diff = duration<double, milli>(end - start);
 
-                    // Проверка целостности пакета
-                    if (bytesRecved <= ipHeaderLen || ipHeaderLen < 20) {
-                        cout << "*\t";
-                        continue;
-                    }
+                        // Получение IP-адреса в текстовом формате
+                        char ipStr[INET_ADDRSTRLEN] = {0};
 
-                    if (recvPack->header.type == 0 && recvPack->header.code == 0) {
-                        if (fromAddr.sin_family == AF_INET) {
-                            GUID recvedGuid = recvPack->data;
+                        inet_ntop(AF_INET, &(fromAddr.sin_addr), ipStr, INET_ADDRSTRLEN);
 
-                            inet_ntop(AF_INET, &(fromAddr.sin_addr), ipStr, INET_ADDRSTRLEN);
-
-                            // Проверка соответствия оригинального и полученного GUID
-                            if (memcmp(&origGuid, &recvedGuid, sizeof(GUID)) == 0) {
-                                // Получение DNS-имени хоста
-                                char hostName[NI_MAXHOST];
-                                int dnsRes = getnameinfo(reinterpret_cast<SOCKADDR *>(&fromAddr),
-                                                         sizeof(fromAddr),
-                                                         hostName,
-                                                         NI_MAXHOST,
-                                                         nullptr,
-                                                         0,
-                                                         0);
-
-                                // Вывод времени
-                                if (diff.count() >= 1)
-                                    cout << (int) diff.count() << "\t";
-                                else
-                                    cout << "<1\t";
-
-                                // Запись имени узла или его IP-адреса в строку
-                                if (!addrGetted) {
-                                    if (dnsRes == 0 && strcmp(hostName, ipStr) != 0) {
-                                        addrInfo += "\t";
-                                        addrInfo += hostName;
-                                        addrInfo += "\t(";
-                                        addrInfo += ipStr;
-                                        addrInfo += ")";
-                                    } else {
-                                        addrInfo += "\t";
-                                        addrInfo += ipStr;
-                                    }
-                                }
-
-                                // Получен адрес
-                                addrGetted = true;
-                            } else {
-                                cout << "*\t";
-                            }
-
-                            destination = true;
+                        // Проверка целостности пакета
+                        if (bytesRecved <= ipHeaderLen || ipHeaderLen < 20) {
+                            cout << "*\t";
+                            continue;
                         }
-                    } else if (recvPack->header.type == 11) {
-                        if (fromAddr.sin_family == AF_INET) {
-                            inet_ntop(AF_INET, &(fromAddr.sin_addr), ipStr, INET_ADDRSTRLEN);
 
-                            // Вычисляем смещение до вложенного IP-заголовка
-                            int outerIcmpLen = bytesRecved - ipHeaderLen;
-                            // Вложенный IP-залоговок
-                            unsigned char *innerIpHeader = reinterpret_cast<unsigned char *>(
-                                                               recvPack)
-                                                           + 8;
+                        if (recvPack->header.type == 0 && recvPack->header.code == 0) {
+                            if (fromAddr.sin_family == AF_INET) {
+                                GUID recvedGuid = recvPack->data;
 
-                            // Длина вложенного IP-заголовка
-                            int innerIpHeaderLen = (innerIpHeader[0] & 0x0F) * 4;
+                                // Проверка соответствия оригинального и полученного GUID
+                                if (origGuid == recvedGuid) {
+                                    // Получение DNS-имени хоста
+                                    char hostName[NI_MAXHOST];
+                                    int dnsRes = getnameinfo((SOCKADDR *) &fromAddr,
+                                                             sizeof(fromAddr),
+                                                             hostName,
+                                                             NI_MAXHOST,
+                                                             nullptr,
+                                                             0,
+                                                             0);
 
-                            if ((unsigned long long) outerIcmpLen
-                                >= sizeof(icmpHeader) + innerIpHeaderLen + sizeof(icmpHeader)
-                                       + sizeof(GUID)) {
-                                // Проверяем, что буфер физически содержит весь GUID
-                                int totalGuidOffset = 8 + innerIpHeaderLen + 4 + sizeof(GUID);
-                                if (outerIcmpLen >= totalGuidOffset) {
-                                    unsigned char *recvedGuid = innerIpHeader + innerIpHeaderLen
-                                                                + 4;
+                                    // Вывод времени
+                                    if (diff.count() >= 1)
+                                        cout << (int) diff.count() << "\t";
+                                    else
+                                        cout << "<1\t";
 
-                                    if (memcmp(&origGuid, recvedGuid, sizeof(GUID)) == 0) {
-                                        // Получение DNS-имени хоста
-                                        char hostName[NI_MAXHOST];
-                                        int dnsRes = getnameinfo(reinterpret_cast<SOCKADDR *>(
-                                                                     &fromAddr),
-                                                                 sizeof(fromAddr),
-                                                                 hostName,
-                                                                 NI_MAXHOST,
-                                                                 nullptr,
-                                                                 0,
-                                                                 0);
-
-                                        // Вывод времени
-                                        if (diff.count() >= 1)
-                                            cout << (int) diff.count() << "\t";
-                                        else
-                                            cout << "<1\t";
-
-                                        // Запись имени узла или его IP-адреса в строку
-                                        if (!addrGetted) {
-                                            if (dnsRes == 0 && strcmp(hostName, ipStr) != 0) {
-                                                addrInfo += "\t";
-                                                addrInfo += hostName;
-                                                addrInfo += "\t(";
-                                                addrInfo += ipStr;
-                                                addrInfo += ")";
-                                            } else {
-                                                addrInfo += "\t";
-                                                addrInfo += ipStr;
-                                            }
+                                    // Запись имени узла или его IP-адреса в строку
+                                    if (!addrGetted) {
+                                        if (dnsRes == 0 && strcmp(hostName, ipStr) != 0) {
+                                            addrInfo += "\t";
+                                            addrInfo += hostName;
+                                            addrInfo += "\t(";
+                                            addrInfo += ipStr;
+                                            addrInfo += ")";
+                                        } else {
+                                            addrInfo += "\t";
+                                            addrInfo += ipStr;
                                         }
-
-                                        // Получен адрес
-                                        addrGetted = true;
-                                    } else {
-                                        cout << "*\t"; // GUID не совпал
                                     }
+
+                                    // Получен адрес
+                                    addrGetted = true;
                                 } else {
-                                    // Маршрутизатор обрезал пакет и прислал меньше 16 байт GUID
                                     cout << "*\t";
                                 }
-                            } else {
-                                // Слишком короткий ICMP-пакет ответа
-                                cout << "*\t";
+
+                                destination = true;
+                            }
+                        } else { // Обработка пакетов с ошибками
+                            // Ошибка TTL
+                            if (recvPack->header.type == 11) {
+                                // Проверка по длине,
+                                // что полученный пакет содержит IP-заголовок
+                                // и ICMP-пакет с сообщением об ошибке
+                                if (bytesRecved < ipHeaderLen + (int) sizeof(icmpErrorPacket)) {
+                                    cout << "*\t";
+                                    continue;
+                                }
+
+                                // Формирование ICMP-сообщения об ошибке
+                                icmpErrorPacket errorPack = *(
+                                    icmpErrorPacket *) (recvBuffer.data() + ipHeaderLen + 4);
+                                // 4 байта - отступ, заложенный для id и sequence
+
+                                // Получение GUID из сообщения
+                                GUID recvData = errorPack.origData;
+
+                                if (origGuid == recvData) {
+                                    // Получение DNS-имени хоста
+                                    char hostName[NI_MAXHOST];
+                                    int dnsRes = getnameinfo((SOCKADDR *) &fromAddr,
+                                                             sizeof(fromAddr),
+                                                             hostName,
+                                                             NI_MAXHOST,
+                                                             nullptr,
+                                                             0,
+                                                             0);
+
+                                    // Вывод времени
+                                    if (diff.count() >= 1)
+                                        cout << (int) diff.count() << "\t";
+                                    else
+                                        cout << "<1\t";
+
+                                    // Запись имени узла или его IP-адреса в строку
+                                    if (!addrGetted) {
+                                        if (dnsRes == 0 && strcmp(hostName, ipStr) != 0) {
+                                            addrInfo += "\t";
+                                            addrInfo += hostName;
+                                            addrInfo += "\t(";
+                                            addrInfo += ipStr;
+                                            addrInfo += ")";
+                                        } else {
+                                            addrInfo += "\t";
+                                            addrInfo += ipStr;
+                                        }
+                                    }
+
+                                    // Получен адрес
+                                    addrGetted = true;
+                                } else {
+                                    cout << "*\t";
+                                }
+                                continue;
+                            } else { // Обработка ошибок
+                                errors(recvPack->header.type, recvPack->header.code);
                             }
                         }
-                    }
-
-                    // Обработка ошибок
-                    else if (recvPack->header.type == 3) {
-                        cerr << "Ошибка: Адресат недостижим.\t";
-                        if (recvPack->header.code == 0) {
-                            cerr << "Сеть недоступна";
-                        } else if (recvPack->header.code == 1) {
-                            cerr << "Узел недоступен";
-                        } else if (recvPack->header.code == 2) {
-                            cerr << "Протокол недоступен";
-                        } else if (recvPack->header.code == 3) {
-                            cerr << "Порт недоступен";
-                        } else if (recvPack->header.code == 4) {
-                            cerr << "Необходима фрагментация, но не задан бит ее запрета";
-                        } else if (recvPack->header.code == 5) {
-                            cerr << "Ошибка на исходном маршруте";
-                        } else if (recvPack->header.code == 6) {
-                            cerr << "Сеть адресата неизвестна";
-                        } else if (recvPack->header.code == 7) {
-                            cerr << "Узел адресата неизвестен";
-                        } else if (recvPack->header.code == 8) {
-                            cerr << "Исходный узел изолирован";
-                        } else if (recvPack->header.code == 9) {
-                            cerr << "Сеть адресата административно изолирована";
-                        } else if (recvPack->header.code == 10) {
-                            cerr << "Узел адресата административно изолирован";
-                        } else if (recvPack->header.code == 11) {
-                            cerr << "Сеть недоступна для TOS";
-                        } else if (recvPack->header.code == 12) {
-                            cerr << "Узел недоступен для TOS";
-                        } else if (recvPack->header.code == 13) {
-                            cerr << "Связь административно запрещена фильтрацией";
-                        } else if (recvPack->header.code == 14) {
-                            cerr << "Нарушение приоритета узлов";
-                        } else if (recvPack->header.code == 15) {
-                            cerr << "Пренебрежение приоритетом узлов";
-                        } else {
-                            cerr << "Ошибка";
-                        }
-                    } else if (recvPack->header.type == 4 && recvPack->header.code == 0) {
-                        cerr << "Ошибка.\tПодавление отправителя.";
-                    } else if (recvPack->header.type == 5) {
-                        cerr << "Ошибка: Перенаправление.\t";
-                        if (recvPack->header.code == 0) {
-                            cerr << "Перенаправление для сети";
-                        } else if (recvPack->header.code == 1) {
-                            cerr << "Перенаправление на узел";
-                        } else if (recvPack->header.code == 2) {
-                            cerr << "Перенаправление на TOS и сеть";
-                        } else if (recvPack->header.code == 3) {
-                            cerr << "Перенаправление на TOS и узел";
-                        } else {
-                            cerr << "Ошибка";
-                        }
-                    } else if (recvPack->header.type == 12) {
-                        cerr << "Ошибка: Проблема параметра.\t";
-                        if (recvPack->header.code == 0) {
-                            cerr << "Неверный заголовок IP";
-                        } else if (recvPack->header.code == 1) {
-                            cerr << "Отсутствует требуемый параметр";
-                        } else {
-                            cerr << "Ошибка";
-                        }
                     } else {
-                        cerr << "Ошибка";
+                        recvError = WSAGetLastError();
+                        if (recvError != WSAEWOULDBLOCK) {
+                            cerr << "Возникла ошибка при получении: " << recvError << endl;
+                            return;
+                        }
                     }
-                }
+                } while (recvError != WSAEWOULDBLOCK);
 
                 // Обработка истечения таймаута
             } else if (selectRes == 0) {
@@ -521,4 +500,78 @@ unsigned short calculateChecksum(unsigned short *buffer, int size)
     cksum = (cksum >> 16) + (cksum & 0xffff);
     cksum += (cksum >> 16);
     return static_cast<unsigned short>(~cksum);
+}
+
+void errors(unsigned char charType, unsigned char charCode)
+{
+    int type = (int) charType;
+    int code = (int) charCode;
+
+    if ((type == 0 && code == 0) || (type == 11))
+        return;
+    if (type == 3) {
+        cerr << "Ошибка: Адресат недостижим.\t";
+        if (code == 0) {
+            cerr << "Сеть недоступна.";
+        } else if (code == 1) {
+            cerr << "Узел недоступен.";
+        } else if (code == 2) {
+            cerr << "Протокол недоступен.";
+        } else if (code == 3) {
+            cerr << "Порт недоступен.";
+        } else if (code == 4) {
+            cerr << "Необходима фрагментация, но не задан бит ее запрета.";
+        } else if (code == 5) {
+            cerr << "Ошибка на исходном маршруте.";
+        } else if (code == 6) {
+            cerr << "Сеть адресата неизвестна.";
+        } else if (code == 7) {
+            cerr << "Узел адресата неизвестен.";
+        } else if (code == 8) {
+            cerr << "Исходный узел изолирован.";
+        } else if (code == 9) {
+            cerr << "Сеть адресата административно изолирована.";
+        } else if (code == 10) {
+            cerr << "Узел адресата административно изолирован.";
+        } else if (code == 11) {
+            cerr << "Сеть недоступна для TOS.";
+        } else if (code == 12) {
+            cerr << "Узел недоступен для TOS.";
+        } else if (code == 13) {
+            cerr << "Связь административно запрещена фильтрацией.";
+        } else if (code == 14) {
+            cerr << "Нарушение приоритета узлов.";
+        } else if (code == 15) {
+            cerr << "Пренебрежение приоритетом узлов.";
+        } else {
+            cerr << "Ошибка. Код: " << code;
+        }
+    } else if (type == 4 && code == 0) {
+        cerr << "Ошибка.\tПодавление отправителя.";
+    } else if (type == 5) {
+        cerr << "Ошибка: Перенаправление.\t";
+        if (code == 0) {
+            cerr << "Перенаправление для сети.";
+        } else if (code == 1) {
+            cerr << "Перенаправление на узел.";
+        } else if (code == 2) {
+            cerr << "Перенаправление на TOS и сеть.";
+        } else if (code == 3) {
+            cerr << "Перенаправление на TOS и узел.";
+        } else {
+            cerr << "Ошибка. Код: " << code;
+        }
+    } else if (type == 12) {
+        cerr << "Ошибка: Проблема параметра.\t";
+        if (code == 0) {
+            cerr << "Неверный заголовок IP.";
+        } else if (code == 1) {
+            cerr << "Отсутствует требуемый параметр.";
+        } else {
+            cerr << "Ошибка. Код: " << code;
+        }
+    } else {
+        cerr << "Ошибка. Тип: " << type << ", код: " << code;
+    }
+    cerr << endl;
 }

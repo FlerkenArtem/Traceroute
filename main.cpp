@@ -297,6 +297,7 @@ void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
                         // что полученный пакет содержит IP-заголовок
                         // и ICMP-пакет
                         if (bytesRecved < ipHeaderLen + (int) sizeof(icmpPacket)) {
+                            cout << "*\t";
                             continue;
                         }
 

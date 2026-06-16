@@ -275,18 +275,33 @@ void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
                                            (sockaddr *) &fromAddr,
                                            &fromAddrSize);
 
+                    // Время окончания
+                    auto end = high_resolution_clock::now();
+
+                    // Разница
+                    auto diff = duration<double, milli>(end - start);
+
                     if (bytesRecved != SOCKET_ERROR) {
-                        int ipHeaderLen = (recvBuffer[0] & 0x0F)
-                                          * 4; // Вычисление длины IPv4 заголовка
+                        if (bytesRecved <= 0) {
+                            cout << "*\t";
+                            continue;
+                        }
+
+                        // Получение IP-заголовка из буфера
+                        ipHeader *ipHdr = (ipHeader *) recvBuffer.data();
+
+                        // Вычисление длины IPv4 заголовка
+                        int ipHeaderLen = ipHdr->len * 4;
+
+                        // Проверка по длине,
+                        // что полученный пакет содержит IP-заголовок
+                        // и ICMP-пакет
+                        if (bytesRecved < ipHeaderLen + (int) sizeof(icmpPacket)) {
+                            continue;
+                        }
 
                         // Полученный ICMP-пакет
                         icmpPacket *recvPack = (icmpPacket *) (recvBuffer.data() + ipHeaderLen);
-
-                        // Время окончания
-                        auto end = high_resolution_clock::now();
-
-                        // Разница
-                        auto diff = duration<double, milli>(end - start);
 
                         // Получение IP-адреса в текстовом формате
                         char ipStr[INET_ADDRSTRLEN] = {0};

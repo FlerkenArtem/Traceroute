@@ -67,9 +67,6 @@ struct icmpErrorPacket
 
 #pragma pack(pop)
 
-/// Получение локального IP адреса
-unsigned long getLocalIP();
-
 /// Создание сокета
 SOCKET createSocket();
 
@@ -128,36 +125,6 @@ int main()
     return 0;
 }
 
-unsigned long getLocalIP()
-{
-    SOCKET udpSock = socket(AF_INET, SOCK_DGRAM, 0); // Создание сокета UDP
-    if (udpSock == INVALID_SOCKET)
-        return INADDR_ANY;
-
-    sockaddr_in loopback;
-    loopback.sin_family = AF_INET;
-    loopback.sin_addr.s_addr = inet_addr("8.8.8.8");
-    loopback.sin_port = htons(53); // Порт DNS
-
-    // Подключение к адресу
-    if (connect(udpSock, reinterpret_cast<sockaddr *>(&loopback), sizeof(loopback))
-        == SOCKET_ERROR) {
-        closesocket(udpSock);
-        return INADDR_ANY;
-    }
-
-    // Извлечение IP-адреса
-    sockaddr_in localAddr;
-    int len = sizeof(localAddr);
-    if (getsockname(udpSock, reinterpret_cast<sockaddr *>(&localAddr), &len) == SOCKET_ERROR) {
-        closesocket(udpSock);
-        return INADDR_ANY;
-    }
-
-    closesocket(udpSock);
-    return localAddr.sin_addr.s_addr;
-}
-
 SOCKET createSocket()
 {
     SOCKET sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
@@ -171,15 +138,6 @@ SOCKET createSocket()
     // Переключение в неблокирующий режим
     unsigned long mode = 1;
     ioctlsocket(sock, FIONBIO, &mode);
-
-    sockaddr_in localAddr;
-    memset(&localAddr, 0, sizeof(localAddr));
-    localAddr.sin_family = AF_INET;
-    localAddr.sin_port = htons(0);
-    localAddr.sin_addr.s_addr = getLocalIP();
-
-    char ipStr[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &(localAddr.sin_addr), ipStr, INET_ADDRSTRLEN);
 
     return sock;
 }

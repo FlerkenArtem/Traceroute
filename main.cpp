@@ -150,8 +150,8 @@ optional<sockaddr_in> connectAddr()
     cout << "Введите адрес: ";
     cin >> hostname;
 
-    struct addrinfo hints;
-    struct addrinfo *result = nullptr;
+    addrinfo hints;
+    addrinfo *result = nullptr;
 
     ZeroMemory(&hints, sizeof(hints));
     hints.ai_family = AF_INET; // IPv4
@@ -364,10 +364,10 @@ void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
                                             addrInfo += "\t";
                                             addrInfo += ipStr;
                                         }
-                                    }
 
-                                    // Получен адрес
-                                    addrGetted = true;
+                                        // Получен адрес
+                                        addrGetted = true;
+                                    }
                                 } else {
                                     cout << "*\t";
                                 }

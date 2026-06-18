@@ -301,6 +301,8 @@ void traceroute(string addr, int maxHops)
                 } while (error != WSAEWOULDBLOCK);
             }
         }
+        if (addrGetted)
+            cout << addrInfo;
     }
 
     WSACleanup();

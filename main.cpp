@@ -305,6 +305,8 @@ void traceroute(string addr, int maxHops)
             cout << addrInfo;
     }
 
+    closesocket(sendSock);
+    closesocket(recvSock);
     WSACleanup();
 }
 

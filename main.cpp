@@ -136,6 +136,10 @@ void traceroute(string addr, int maxHops)
     SOCKET sendSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP); // UDP-сокет для отправки
     SOCKET recvSock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);  // ICMP-сокет для получения
 
+    // Перевод сокета в неблокирующий режим
+    unsigned long mode = 1;
+    ioctlsocket(recvSock, FIONBIO, &mode);
+
     if (sendSock == INVALID_SOCKET || recvSock == INVALID_SOCKET) {
         cerr << "Ошибка создания сокетов" << endl;
         return;

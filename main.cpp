@@ -40,7 +40,7 @@ struct icmpHeader
 struct udpHeader
 {
     unsigned short srcPort;
-    unsigned short dstPort;
+    unsigned short destPort;
     unsigned short len;
     unsigned short checksum;
 };
@@ -103,10 +103,204 @@ void traceroute(string addr, int maxHops)
         return;
     }
 
-    SOCKET sendSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-    SOCKET recvSock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+    addrinfo hints{};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
 
-    for (int ttl = 1, port = 33434; ttl <= maxHops; ttl++, port++) {
+    addrinfo *result = nullptr;
+
+    if (getaddrinfo(addr.c_str(), nullptr, &hints, &result) != 0) {
+        cerr << "Ошибка разрешения имени" << endl;
+        return;
+    }
+
+    sockaddr_in destAddr = *(sockaddr_in *) result->ai_addr;
+    freeaddrinfo(result);
+
+    char hostBuf[NI_MAXHOST];
+    char ipBuf[INET_ADDRSTRLEN];
+
+    getnameinfo((sockaddr *) &destAddr,
+                sizeof(destAddr),
+                hostBuf,
+                sizeof(hostBuf),
+                nullptr,
+                0,
+                NI_NUMERICSERV);
+
+    cout << "Трассировка маршрута к " << hostBuf << " ["
+         << inet_ntop(AF_INET, &destAddr.sin_addr, ipBuf, sizeof(ipBuf)) << "] " << endl
+         << "с максимальным числом прыжков " << maxHops << ":" << endl;
+
+    // Создание сокетов
+    SOCKET sendSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP); // UDP-сокет для отправки
+    SOCKET recvSock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);  // ICMP-сокет для получения
+
+    if (sendSock == INVALID_SOCKET || recvSock == INVALID_SOCKET) {
+        cerr << "Ошибка создания сокетов" << endl;
+        return;
+    }
+
+    // Размер буфера для приема данных в байтах
+    const int bufferSize = 1024;
+
+    // Буфер приема данных
+    vector<char> recvBuffer(bufferSize);
+
+    // Каждая итерация цикла - увеличение TTL на 1
+    // По 3 попытки на каждый TTL
+    for (int ttl = 1; ttl <= maxHops; ttl++) {
+        cout << endl << ttl << "\t";
+
+        // Порт на текущей итерации
+        int sendPort = 33434 + ttl;
+
+        // Установка порта
+        destAddr.sin_port = htons(sendPort);
+
+        // Установка TLL
+        setsockopt(sendSock, IPPROTO_IP, IP_TTL, (char *) &ttl, sizeof(ttl));
+
+        bool addrGetted = false;
+        string addrInfo;
+
+        // 3 попытки на TTL
+        for (int attempt = 0; attempt < 3; attempt++) {
+            GUID origGuid{};
+
+            // Обработка ошибки при создании GUID
+            if (CoCreateGuid(&origGuid) != S_OK) {
+                cout << "*\t";
+                continue;
+            }
+
+            auto start = steady_clock::now();
+
+            int sendRes = sendto(sendSock,
+                                 (char *) &origGuid,
+                                 sizeof(origGuid),
+                                 0,
+                                 (sockaddr *) &destAddr,
+                                 sizeof(destAddr));
+
+            if (sendRes == SOCKET_ERROR) {
+                cout << "*\t";
+                continue;
+            }
+
+            fd_set fdSet{};
+            FD_ZERO(&fdSet);
+            FD_SET(recvSock, &fdSet);
+
+            timeval timeout{};
+            timeout.tv_sec = 1;
+            timeout.tv_usec = 0;
+
+            if (select(0, &fdSet, nullptr, nullptr, &timeout) <= 0) {
+                cout << "*\t";
+                continue;
+            }
+
+            if (FD_ISSET(recvSock, &fdSet)) {
+                sockaddr_in fromAddr{};
+                int fromSize = sizeof(fromAddr);
+                int error = 0;
+                steady_clock::time_point end{};
+
+                do {
+                    int bytesRecved = recvfrom(recvSock,
+                                               recvBuffer.data(),
+                                               recvBuffer.size(),
+                                               0,
+                                               (sockaddr *) &fromAddr,
+                                               &fromSize);
+
+                    if (end - start > 1s) {
+                        cout << "*\t";
+                        break;
+                    }
+
+                    if (bytesRecved <= 0) {
+                        continue;
+                    } else if (bytesRecved == SOCKET_ERROR) {
+                        error = WSAGetLastError();
+                        if (error != WSAEWOULDBLOCK) {
+                            cerr << "Ошибка приема: " << error;
+                            return;
+                        }
+                    } else {
+                        end = steady_clock::now();
+                        duration<double, milli> diff = end - start;
+
+                        ipHeader *ipHdr = (ipHeader *) recvBuffer.data();
+
+                        int ipLen = ipHdr->len * 4;
+
+                        if ((unsigned long long) bytesRecved < ipLen + sizeof(icmpErrorPacket)) {
+                            continue;
+                        }
+
+                        icmpErrorPacket *errPack = (icmpErrorPacket *) recvBuffer.data() + ipLen;
+
+                        if ((errPack->icmpHdr.type == 11 && errPack->icmpHdr.code == 0)
+                            || (errPack->icmpHdr.type == 0 && errPack->icmpHdr.code == 0)
+                            || (errPack->icmpHdr.type == 3 && errPack->icmpHdr.code == 3)) {
+                            int recvPort = ntohs(errPack->origUdpHdr.destPort);
+
+                            GUID recvedGuid = errPack->data;
+
+                            if (recvPort != sendPort) {
+                                continue;
+                            }
+
+                            if (!IsEqualGUID(origGuid, recvedGuid)) {
+                                attempt--;
+                                continue;
+                            }
+
+                            char ipStr[INET_ADDRSTRLEN];
+
+                            inet_ntop(AF_INET, &fromAddr.sin_addr, ipStr, sizeof(ipStr));
+
+                            if (!addrGetted) {
+                                char hostName[NI_MAXHOST];
+
+                                int dnsRes = getnameinfo((sockaddr *) &fromAddr,
+                                                         sizeof(fromAddr),
+                                                         hostName,
+                                                         NI_MAXHOST,
+                                                         nullptr,
+                                                         0,
+                                                         0);
+
+                                if (dnsRes == 0 && strcmp(hostName, ipStr) != 0) {
+                                    addrInfo = string(hostName) + " (" + ipStr + ")";
+                                } else {
+                                    addrInfo = ipStr;
+                                }
+
+                                addrGetted = true;
+
+                                if (diff.count() < 1)
+                                    cout << "<1\t";
+                                else
+                                    cout << (int) diff.count() << "\t";
+
+                                if (errPack->icmpHdr.type == 3 && errPack->icmpHdr.code == 3) {
+                                    cout << addrInfo << endl;
+
+                                    closesocket(sendSock);
+                                    closesocket(recvSock);
+
+                                    cout << "Достигнут целевой узел" << endl;
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                } while (error != WSAEWOULDBLOCK);
+            }
+        }
     }
 
     WSACleanup();
@@ -132,7 +326,7 @@ void errors(unsigned char charType, unsigned char charCode)
     int type = (int) charType;
     int code = (int) charCode;
 
-    if ((type == 0 && code == 0) || (type == 11))
+    if ((type == 0 && code == 0) || (type == 11) || (type == 3 && code == 3))
         return;
     if (type == 3) {
         cerr << "Ошибка: Адресат недостижим.\t";
@@ -142,8 +336,6 @@ void errors(unsigned char charType, unsigned char charCode)
             cerr << "Узел недоступен.";
         } else if (code == 2) {
             cerr << "Протокол недоступен.";
-        } else if (code == 3) {
-            cerr << "Порт недоступен.";
         } else if (code == 4) {
             cerr << "Необходима фрагментация, но не задан бит ее запрета.";
         } else if (code == 5) {

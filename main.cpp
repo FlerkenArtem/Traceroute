@@ -1,7 +1,6 @@
 #include <chrono>
 #include <combaseapi.h>
 #include <iostream>
-#include <optional>
 #include <vector>
 #include <winsock2.h>
 #include <ws2tcpip.h>
@@ -67,17 +66,8 @@ struct icmpErrorPacket
 
 #pragma pack(pop)
 
-/// Создание сокета
-SOCKET createSocket();
-
-/// Подключение сокета к адресу
-optional<sockaddr_in> connectAddr();
-
-/// Получение максимального числа шагов
-int maxHops();
-
 /// Определение маршрута
-void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops = 30);
+void traceroute(string addr, int maxHops = 30);
 
 /// Вычисление контрольной суммы
 unsigned short calculateChecksum(unsigned short *buffer, int size);
@@ -86,109 +76,56 @@ unsigned short calculateChecksum(unsigned short *buffer, int size);
 void errors(unsigned char charType, unsigned char charCode);
 
 /// Точка входа в программу
-int main()
+int main(int argc, char *argv[])
 {
     system("chcp 65001 > nul");
     setlocale(LC_ALL, ".UTF8");
 
-    cout << "TRACEROUTE" << endl;
+    if (argc == 2) {
+        string addr = argv[1];
+        traceroute(addr);
+    } else if (argc == 4 && string(argv[2]) == "-h") {
+        string addr = argv[1];
+        int hops = stoi(string(argv[3]));
+        traceroute(addr, hops);
+    } else {
+        cerr << "Использование: "
+                "имя_узла_или_IP [-h количество_шагов]";
+        return 1;
+    }
 
+    return 0;
+}
+
+void traceroute(string addr, int maxHops)
+{
     WORD wVersionRequested = MAKEWORD(2, 2);
     WSADATA wsaData;
 
     int err = WSAStartup(wVersionRequested, &wsaData);
     if (err != 0) {
-        return 1;
+        return;
     }
 
     if (LOBYTE(wsaData.wVersion) != 2 || HIBYTE(wsaData.wVersion) != 2) {
         WSACleanup();
-        return 1;
+        return;
     }
 
-    SOCKET sock = createSocket();
-    if (sock == INVALID_SOCKET) {
-        cerr << "Ошибка создания сокета" << sock << endl;
-        return 1;
-    }
+    addrinfo hints{};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
 
-    optional<sockaddr_in> destAddr = connectAddr();
-    if (destAddr == nullopt) {
-        cerr << "Ошибка подключения к адресу" << endl;
-        return 1;
-    }
-
-    int hops = maxHops();
-
-    traceroute(sock, *destAddr, hops);
-
-    return 0;
-}
-
-SOCKET createSocket()
-{
-    SOCKET sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
-    if (sock == INVALID_SOCKET) {
-        int lastErr = WSAGetLastError();
-        cerr << "Ошибка создания сокета: " << lastErr << endl;
-        WSACleanup();
-        return INVALID_SOCKET;
-    }
-
-    // Переключение в неблокирующий режим
-    unsigned long mode = 1;
-    ioctlsocket(sock, FIONBIO, &mode);
-
-    return sock;
-}
-
-optional<sockaddr_in> connectAddr()
-{
-    string hostname;
-    sockaddr_in destAddr;
-
-    cout << "Введите адрес: ";
-    cin >> hostname;
-
-    addrinfo hints;
     addrinfo *result = nullptr;
 
-    ZeroMemory(&hints, sizeof(hints));
-    hints.ai_family = AF_INET; // IPv4
-    hints.ai_socktype = SOCK_RAW;
-    hints.ai_protocol = IPPROTO_ICMP; // ICMP
-
-    int dnsResult = getaddrinfo(hostname.c_str(), nullptr, &hints, &result);
-    if (dnsResult != 0) {
-        cerr << "Ошибка разрешения DNS: " << dnsResult << endl;
-        return nullopt;
+    if (getaddrinfo(addr.c_str(), nullptr, &hints, &result) != 0) {
+        cerr << "Ошибка разрешения имени" << endl;
+        return;
     }
 
-    if (result != nullptr && result->ai_addr != nullptr) {
-        memcpy(&destAddr, result->ai_addr, sizeof(sockaddr_in));
-    }
-
+    sockaddr_in destAddr = *(sockaddr_in *) result->ai_addr;
     freeaddrinfo(result);
-    return destAddr;
-}
 
-int maxHops()
-{
-    while (true) {
-        int hops = 0;
-        cout << "Введите максимальное число шагов: ";
-        if (cin >> hops && hops > 0) {
-            return hops;
-        } else {
-            cin.clear();
-            cin.ignore(numeric_limits<streamsize>::max(), '\n');
-            cout << "Введено некррекное число шагов. Введите число больше 0.";
-        }
-    }
-}
-
-void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
-{
     char hostBuf[NI_MAXHOST];
     char ipBuf[INET_ADDRSTRLEN];
 
@@ -203,6 +140,18 @@ void traceroute(SOCKET sock, sockaddr_in destAddr, int maxHops)
     cout << "Трассировка маршрута к " << hostBuf << " ["
          << inet_ntop(AF_INET, &destAddr.sin_addr, ipBuf, sizeof(ipBuf)) << "] " << endl
          << "с максимальным числом прыжков " << maxHops << ":" << endl;
+
+    SOCKET sock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+    if (sock == INVALID_SOCKET) {
+        int lastErr = WSAGetLastError();
+        cerr << "Ошибка создания сокета: " << lastErr << endl;
+        WSACleanup();
+        return;
+    }
+
+    // Переключение в неблокирующий режим
+    unsigned long mode = 1;
+    ioctlsocket(sock, FIONBIO, &mode);
 
     // Установка размера буфера
     const int bufferSize = 1024;

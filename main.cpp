@@ -133,15 +133,33 @@ void traceroute(string addr, int maxHops)
          << "с максимальным числом прыжков " << maxHops << ":" << endl;
 
     // Создание сокетов
-    SOCKET sendSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP); // UDP-сокет для отправки
-    SOCKET recvSock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);  // ICMP-сокет для получения
+    SOCKET recvSock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP); // ICMP-сокет для получения
 
     // Перевод сокета в неблокирующий режим
     unsigned long mode = 1;
-    ioctlsocket(recvSock, FIONBIO, &mode);
+    int unblock = ioctlsocket(recvSock, FIONBIO, &mode);
+
+    SOCKET sendSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP); // UDP-сокет для отправки
 
     if (sendSock == INVALID_SOCKET || recvSock == INVALID_SOCKET) {
         cerr << "Ошибка создания сокетов" << endl;
+        return;
+    }
+
+    if (unblock == SOCKET_ERROR) {
+        cerr << "Ошибка перевода принимающего сокета в неблокирующий режим: " << WSAGetLastError()
+             << endl;
+        return;
+    }
+
+    sockaddr_in localAddr;
+    localAddr.sin_family = AF_INET;
+    localAddr.sin_port = htons(0);
+    localAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+
+    int bindRes = bind(recvSock, (sockaddr *) &localAddr, sizeof(localAddr));
+    if (bindRes == SOCKET_ERROR) {
+        cerr << "Ошибка привязки принимающего сокета: " << WSAGetLastError() << endl;
         return;
     }
 
@@ -200,7 +218,10 @@ void traceroute(string addr, int maxHops)
             timeout.tv_sec = 1;
             timeout.tv_usec = 0;
 
-            if (select(0, &fdSet, nullptr, nullptr, &timeout) <= 0) {
+            int selectRes = select(0, &fdSet, nullptr, nullptr, &timeout);
+
+            if (selectRes <= 0) {
+                cout << "selectRes = " << selectRes << endl;
                 cout << "*\t";
                 continue;
             }

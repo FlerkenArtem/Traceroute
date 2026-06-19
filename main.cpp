@@ -159,7 +159,13 @@ void traceroute(string addr, int maxHops)
 
     int bindRes = bind(recvSock, (sockaddr *) &localAddr, sizeof(localAddr));
     if (bindRes == SOCKET_ERROR) {
-        cerr << "Ошибка привязки принимающего сокета: " << WSAGetLastError() << endl;
+        cerr << "Ошибка bind принимающего сокета: " << WSAGetLastError() << endl;
+        return;
+    }
+
+    int connectRes = connect(recvSock, (sockaddr *) &destAddr, sizeof(destAddr));
+    if (connectRes == SOCKET_ERROR) {
+        cerr << "Ошибка connect принимающего сокета: " << WSAGetLastError() << endl;
         return;
     }
 

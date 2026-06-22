@@ -152,10 +152,14 @@ void traceroute(string addr, int maxHops)
         return;
     }
 
+    char hostname[256];
+    gethostname(hostname, sizeof(hostname));
+    struct hostent *host = gethostbyname(hostname);
+
     sockaddr_in localAddr;
     localAddr.sin_family = AF_INET;
     localAddr.sin_port = htons(0);
-    localAddr.sin_addr.s_addr = htonl(INADDR_ANY);
+    localAddr.sin_addr.s_addr = ((struct in_addr *) (host->h_addr_list[0]))->s_addr;
 
     int bindRes = bind(recvSock, (sockaddr *) &localAddr, sizeof(localAddr));
     if (bindRes == SOCKET_ERROR) {
@@ -163,10 +167,19 @@ void traceroute(string addr, int maxHops)
         return;
     }
 
-    int connectRes = connect(recvSock, (sockaddr *) &destAddr, sizeof(destAddr));
-    if (connectRes == SOCKET_ERROR) {
-        cerr << "Ошибка connect принимающего сокета: " << WSAGetLastError() << endl;
-        return;
+    DWORD optval = 1;
+    DWORD bytesReturned = 0;
+    if (WSAIoctl(recvSock,
+                 SIO_RCVALL,
+                 &optval,
+                 sizeof(optval),
+                 nullptr,
+                 0,
+                 &bytesReturned,
+                 nullptr,
+                 nullptr)
+        == SOCKET_ERROR) {
+        cerr << "Ошибка SIO_RCVALL: " << WSAGetLastError() << endl;
     }
 
     // Размер буфера для приема данных в байтах
@@ -227,7 +240,6 @@ void traceroute(string addr, int maxHops)
             int selectRes = select(0, &fdSet, nullptr, nullptr, &timeout);
 
             if (selectRes <= 0) {
-                cout << "selectRes = " << selectRes << endl;
                 cout << "*\t";
                 continue;
             }

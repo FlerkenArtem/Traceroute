@@ -45,14 +45,6 @@ struct udpHeader
     unsigned short checksum;
 };
 
-/// Структура UDP-пакета
-struct udpPacket
-{
-    ipHeader ipHdr;
-    udpHeader udpHdr;
-    GUID data;
-};
-
 /// Структура пакета ICMP с ошибкой
 struct icmpErrorPacket
 {
@@ -140,8 +132,8 @@ void traceroute(string addr, int maxHops)
          << inet_ntop(AF_INET, &destAddr.sin_addr, ipBuf, sizeof(ipBuf)) << "] " << endl
          << "с максимальным числом прыжков " << maxHops << ":" << endl;
 
-    // Создание сокетов
-    SOCKET recvSock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP); // ICMP-сокет для получения
+    // ICMP-сокет для получения
+    SOCKET recvSock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
 
     if (recvSock == INVALID_SOCKET) {
         cerr << "Ошибка создания сокета на прием: " << WSAGetLastError() << endl;
@@ -157,16 +149,10 @@ void traceroute(string addr, int maxHops)
         return;
     }
 
-    SOCKET sendSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP); // UDP-сокет для отправки
-
+    // UDP-сокет для отправки
+    SOCKET sendSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sendSock == INVALID_SOCKET) {
         cerr << "Ошибка создания сокета на отправку: " << WSAGetLastError() << endl;
-        return;
-    }
-
-    if (unblock == SOCKET_ERROR) {
-        cerr << "Ошибка перевода принимающего сокета в неблокирующий режим: " << WSAGetLastError()
-             << endl;
         return;
     }
 

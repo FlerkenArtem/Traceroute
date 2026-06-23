@@ -45,6 +45,14 @@ struct udpHeader
     unsigned short checksum;
 };
 
+/// Структура UDP-пакета
+struct udpPacket
+{
+    ipHeader ipHdr;
+    udpHeader udpHdr;
+    GUID data;
+};
+
 /// Структура пакета ICMP с ошибкой
 struct icmpErrorPacket
 {
@@ -135,14 +143,24 @@ void traceroute(string addr, int maxHops)
     // Создание сокетов
     SOCKET recvSock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP); // ICMP-сокет для получения
 
+    if (recvSock == INVALID_SOCKET) {
+        cerr << "Ошибка создания сокета на прием: " << WSAGetLastError() << endl;
+        return;
+    }
+
     // Перевод сокета в неблокирующий режим
     unsigned long mode = 1;
     int unblock = ioctlsocket(recvSock, FIONBIO, &mode);
 
+    if (unblock == SOCKET_ERROR) {
+        cerr << "Ошибка перевода сокета в неблокирующий режим: " << WSAGetLastError() << endl;
+        return;
+    }
+
     SOCKET sendSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP); // UDP-сокет для отправки
 
-    if (sendSock == INVALID_SOCKET || recvSock == INVALID_SOCKET) {
-        cerr << "Ошибка создания сокетов" << endl;
+    if (sendSock == INVALID_SOCKET) {
+        cerr << "Ошибка создания сокета на отправку: " << WSAGetLastError() << endl;
         return;
     }
 
@@ -150,36 +168,6 @@ void traceroute(string addr, int maxHops)
         cerr << "Ошибка перевода принимающего сокета в неблокирующий режим: " << WSAGetLastError()
              << endl;
         return;
-    }
-
-    char hostname[256];
-    gethostname(hostname, sizeof(hostname));
-    struct hostent *host = gethostbyname(hostname);
-
-    sockaddr_in localAddr;
-    localAddr.sin_family = AF_INET;
-    localAddr.sin_port = htons(0);
-    localAddr.sin_addr.s_addr = ((struct in_addr *) (host->h_addr_list[0]))->s_addr;
-
-    int bindRes = bind(recvSock, (sockaddr *) &localAddr, sizeof(localAddr));
-    if (bindRes == SOCKET_ERROR) {
-        cerr << "Ошибка bind принимающего сокета: " << WSAGetLastError() << endl;
-        return;
-    }
-
-    DWORD optval = 1;
-    DWORD bytesReturned = 0;
-    if (WSAIoctl(recvSock,
-                 SIO_RCVALL,
-                 &optval,
-                 sizeof(optval),
-                 nullptr,
-                 0,
-                 &bytesReturned,
-                 nullptr,
-                 nullptr)
-        == SOCKET_ERROR) {
-        cerr << "Ошибка SIO_RCVALL: " << WSAGetLastError() << endl;
     }
 
     // Размер буфера для приема данных в байтах

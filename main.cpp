@@ -42,19 +42,6 @@ struct icmpPacket
     GUID data;
 };
 
-/// Структура с дополнительными данными о пакете
-struct packData
-{
-    GUID recvedGuid;
-    time_point<steady_clock> sendTime = {};
-    time_point<steady_clock> recvTime = {};
-
-    bool sended = false;
-    bool recved = false;
-    bool timeout = false;
-    bool error = false;
-};
-
 /// Структура пакета ICMP с ошибкой
 struct icmpErrorPacket
 {
@@ -84,13 +71,13 @@ int main(int argc, char *argv[])
     if (argc == 2) {
         string addr = argv[1];
         traceroute(addr);
-    } else if (argc == 4 && string(argv[2]) == "-h") {
-        string addr = argv[1];
-        int hops = stoi(string(argv[3]));
+    } else if (argc == 4 && string(argv[1]) == "-h") {
+        string addr = argv[3];
+        int hops = stoi(string(argv[2]));
         traceroute(addr, hops);
     } else {
         cerr << "Использование: "
-                "имя_узла_или_IP [-h количество_шагов]";
+                "[-h количество_шагов] имя_узла_или_IP";
         return 1;
     }
 

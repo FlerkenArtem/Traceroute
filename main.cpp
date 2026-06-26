@@ -233,7 +233,11 @@ void traceroute(string addr, int maxHops)
         destAddr.sin_port = htons(sendPort);
 
         // Установка TLL
-        setsockopt(sendSock, IPPROTO_IP, IP_TTL, (char *) &ttl, sizeof(ttl));
+        if (setsockopt(sendSock, IPPROTO_IP, IP_TTL, (char *) &ttl, sizeof(ttl)) == SOCKET_ERROR) {
+            int err = WSAGetLastError();
+            cerr << "Ошибка установки TTL на отправляющий сокет: " << err << endl;
+            return;
+        }
 
         bool addrGetted = false;
         string addrInfo;

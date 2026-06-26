@@ -85,6 +85,9 @@ unsigned short calculateChecksum(unsigned short *buffer, int size);
 /// Обработка ошибок ICMP
 void errors(unsigned char charType, unsigned char charCode);
 
+/// Получение локального IP-адреса
+unsigned long getLocalIP();
+
 /// Точка входа в программу
 int main(int argc, char *argv[])
 {
@@ -162,11 +165,21 @@ void traceroute(string addr, int maxHops)
     SOCKET recvSock = socket(AF_INET, SOCK_RAW, IPPROTO_IP);
 
     if (recvSock == INVALID_SOCKET) {
-        cerr << "Ошибка создания сокета на прием: " << WSAGetLastError() << endl;
+        int err = WSAGetLastError();
+        cerr << "Ошибка создания сокета на прием: " << err << endl;
         return;
     }
 
-    // bind
+    sockaddr_in localAddr;
+    localAddr.sin_family = AF_INET;
+    localAddr.sin_port = htons(0);
+    localAddr.sin_addr.s_addr = getLocalIP();
+
+    if (bind(recvSock, (sockaddr *) &localAddr, sizeof(localAddr)) == SOCKET_ERROR) {
+        int err = WSAGetLastError();
+        cerr << "Ошибка привязки принимающего сокета к локальному концу: " << err << endl;
+        return;
+    }
 
     DWORD dwValue = RCVALL_ON;
     DWORD dwBytesReturned = 0;
@@ -181,7 +194,8 @@ void traceroute(string addr, int maxHops)
                  nullptr,
                  nullptr)
         == SOCKET_ERROR) {
-        cerr << "Ошибка при переводе сокета в неразборчивый режим: " << WSAGetLastError() << endl;
+        int err = WSAGetLastError();
+        cerr << "Ошибка при переводе сокета в неразборчивый режим: " << err << endl;
         return;
     }
 
@@ -296,6 +310,10 @@ void traceroute(string addr, int maxHops)
 
                         ipHeader *ipHdr = (ipHeader *) recvBuffer.data();
 
+                        if (ipHdr->proto != IPPROTO_ICMP) {
+                            continue;
+                        }
+
                         int ipLen = ipHdr->len * 4;
 
                         if ((unsigned long long) bytesRecved < ipLen + sizeof(icmpErrorPacket)) {
@@ -307,16 +325,10 @@ void traceroute(string addr, int maxHops)
                         if ((errPack->icmpHdr.type == 11 && errPack->icmpHdr.code == 0)
                             || (errPack->icmpHdr.type == 0 && errPack->icmpHdr.code == 0)
                             || (errPack->icmpHdr.type == 3 && errPack->icmpHdr.code == 3)) {
-                            int recvPort = ntohs(errPack->origUdpHdr.destPort);
 
                             GUID recvedGuid = errPack->data;
 
-                            if (recvPort != sendPort) {
-                                continue;
-                            }
-
                             if (!IsEqualGUID(origGuid, recvedGuid)) {
-                                attempt--;
                                 continue;
                             }
 
@@ -789,4 +801,33 @@ void errors(unsigned char charType, unsigned char charCode)
         cerr << "Ошибка. Тип: " << type << ", код: " << code;
     }
     cerr << endl;
+}
+
+unsigned long getLocalIP()
+{
+    SOCKET udpSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP); // Создание сокета UDP
+    if (udpSock == INVALID_SOCKET)
+        return INADDR_ANY;
+
+    sockaddr_in loopback;
+    loopback.sin_family = AF_INET;
+    loopback.sin_addr.s_addr = inet_addr("8.8.8.8");
+    loopback.sin_port = htons(53); // Порт DNS
+
+    // Подключение к адресу
+    if (connect(udpSock, (sockaddr *) &loopback, sizeof(loopback)) == SOCKET_ERROR) {
+        closesocket(udpSock);
+        return INADDR_ANY;
+    }
+
+    // Извлечение IP-адреса
+    sockaddr_in localAddr;
+    int len = sizeof(localAddr);
+    if (getsockname(udpSock, (sockaddr *) &localAddr, &len) == SOCKET_ERROR) {
+        closesocket(udpSock);
+        return INADDR_ANY;
+    }
+
+    closesocket(udpSock);
+    return localAddr.sin_addr.s_addr;
 }

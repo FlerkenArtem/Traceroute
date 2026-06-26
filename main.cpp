@@ -159,10 +159,29 @@ void traceroute(string addr, int maxHops)
          << "с максимальным числом прыжков " << maxHops << ":" << endl;
 
     // ICMP-сокет для получения
-    SOCKET recvSock = socket(AF_INET, SOCK_RAW, IPPROTO_ICMP);
+    SOCKET recvSock = socket(AF_INET, SOCK_RAW, IPPROTO_IP);
 
     if (recvSock == INVALID_SOCKET) {
         cerr << "Ошибка создания сокета на прием: " << WSAGetLastError() << endl;
+        return;
+    }
+
+    // bind
+
+    DWORD dwValue = RCVALL_ON;
+    DWORD dwBytesReturned = 0;
+
+    if (WSAIoctl(recvSock,
+                 SIO_RCVALL,
+                 &dwValue,
+                 sizeof(dwValue),
+                 nullptr,
+                 0,
+                 &dwBytesReturned,
+                 nullptr,
+                 nullptr)
+        == SOCKET_ERROR) {
+        cerr << "Ошибка при переводе сокета в неразборчивый режим: " << WSAGetLastError() << endl;
         return;
     }
 

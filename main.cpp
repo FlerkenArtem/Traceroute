@@ -114,6 +114,8 @@ int main(int argc, char *argv[])
         return 1;
     }
 
+    cout << endl;
+
     return 0;
 }
 
@@ -216,10 +218,10 @@ void traceroute(string addr, int maxHops)
     }
 
     // Размер буфера для приема данных в байтах
-    const int bufferSize = 1024;
+    const int bufferSize = 65535;
 
     // Буфер приема данных
-    vector<char> recvBuffer(bufferSize);
+    vector<char> recvBuffer;
 
     // Каждая итерация цикла - увеличение TTL на 1
     // По 3 попытки на каждый TTL
@@ -283,14 +285,15 @@ void traceroute(string addr, int maxHops)
 
             if (FD_ISSET(recvSock, &fdSet)) {
                 sockaddr_in fromAddr{};
-                int fromSize = sizeof(fromAddr);
                 int error = 0;
                 steady_clock::time_point end{};
 
                 do {
+                    int fromSize = sizeof(fromAddr);
+                    recvBuffer.resize(bufferSize);
                     int bytesRecved = recvfrom(recvSock,
                                                recvBuffer.data(),
-                                               recvBuffer.size(),
+                                               bufferSize,
                                                0,
                                                (sockaddr *) &fromAddr,
                                                &fromSize);
@@ -300,13 +303,13 @@ void traceroute(string addr, int maxHops)
                         break;
                     }
 
-                    if (bytesRecved <= 0) {
-                        continue;
-                    } else if (bytesRecved == SOCKET_ERROR) {
+                    if (bytesRecved == SOCKET_ERROR) {
                         error = WSAGetLastError();
                         if (error != WSAEWOULDBLOCK) {
                             cerr << "Ошибка приема: " << error;
                             return;
+                        } else {
+                            cout << "*\t";
                         }
                     } else {
                         end = steady_clock::now();
@@ -324,7 +327,7 @@ void traceroute(string addr, int maxHops)
                             continue;
                         }
 
-                        icmpErrorPacket *errPack = (icmpErrorPacket *) recvBuffer.data() + ipLen;
+                        icmpErrorPacket *errPack = (icmpErrorPacket *) (recvBuffer.data() + ipLen);
 
                         if ((errPack->icmpHdr.type == 11 && errPack->icmpHdr.code == 0)
                             || (errPack->icmpHdr.type == 0 && errPack->icmpHdr.code == 0)

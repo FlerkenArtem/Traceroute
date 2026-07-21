@@ -246,6 +246,8 @@ void traceroute(string addr, int maxHops)
 
         // 3 попытки на TTL
         for (int attempt = 0; attempt < 3; attempt++) {
+            bool attemptSuccess = false;
+
             GUID origGuid{};
 
             // Обработка ошибки при создании GUID
@@ -288,7 +290,12 @@ void traceroute(string addr, int maxHops)
                 int error = 0;
                 steady_clock::time_point end{};
 
-                do {
+                while (true) {
+                    if (end - start > 1s) {
+                        cout << "*\t";
+                        break;
+                    }
+
                     int fromSize = sizeof(fromAddr);
                     recvBuffer.resize(bufferSize);
                     int bytesRecved = recvfrom(recvSock,
@@ -298,18 +305,13 @@ void traceroute(string addr, int maxHops)
                                                (sockaddr *) &fromAddr,
                                                &fromSize);
 
-                    if (end - start > 1s) {
-                        cout << "*\t";
-                        break;
-                    }
-
                     if (bytesRecved == SOCKET_ERROR) {
                         error = WSAGetLastError();
                         if (error != WSAEWOULDBLOCK) {
                             cerr << "Ошибка приема: " << error;
                             return;
                         } else {
-                            cout << "*\t";
+                            continue;
                         }
                     } else {
                         end = steady_clock::now();
@@ -330,14 +332,19 @@ void traceroute(string addr, int maxHops)
                         icmpErrorPacket *errPack = (icmpErrorPacket *) (recvBuffer.data() + ipLen);
 
                         if ((errPack->icmpHdr.type == 11 && errPack->icmpHdr.code == 0)
-                            || (errPack->icmpHdr.type == 0 && errPack->icmpHdr.code == 0)
                             || (errPack->icmpHdr.type == 3 && errPack->icmpHdr.code == 3)) {
-
                             GUID recvedGuid = errPack->data;
 
                             if (!IsEqualGUID(origGuid, recvedGuid)) {
                                 continue;
                             }
+
+                            attemptSuccess = true;
+
+                            if (diff.count() < 1)
+                                cout << "<1\t";
+                            else
+                                cout << (int) diff.count() << "\t";
 
                             char ipStr[INET_ADDRSTRLEN];
 
@@ -361,25 +368,22 @@ void traceroute(string addr, int maxHops)
                                 }
 
                                 addrGetted = true;
+                            }
 
-                                if (diff.count() < 1)
-                                    cout << "<1\t";
-                                else
-                                    cout << (int) diff.count() << "\t";
+                            if (errPack->icmpHdr.type == 3 && errPack->icmpHdr.code == 3) {
+                                cout << addrInfo << endl;
 
-                                if (errPack->icmpHdr.type == 3 && errPack->icmpHdr.code == 3) {
-                                    cout << addrInfo << endl;
+                                closesocket(sendSock);
+                                closesocket(recvSock);
 
-                                    closesocket(sendSock);
-                                    closesocket(recvSock);
-
-                                    cout << "Достигнут целевой узел" << endl;
-                                    return;
-                                }
+                                cout << "Достигнут целевой узел" << endl;
+                                return;
                             }
                         }
                     }
-                } while (error != WSAEWOULDBLOCK);
+                    if (attemptSuccess)
+                        break;
+                }
             }
         }
         if (addrGetted)

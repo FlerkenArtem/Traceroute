@@ -110,7 +110,7 @@ int main(int argc, char *argv[])
         tracert(addr, hops);
     } else {
         cerr << "Использование: "
-                "имя_узла_или_IP [-h количество_шагов]";
+                "имя_узла_или_IP [-I] [-h количество_шагов]";
         return 1;
     }
 
@@ -242,6 +242,7 @@ void traceroute(string addr, int maxHops)
         }
 
         bool addrGetted = false;
+        bool destGetted = false;
         string addrInfo;
 
         // 3 попытки на TTL
@@ -325,18 +326,32 @@ void traceroute(string addr, int maxHops)
 
                         int ipLen = ipHdr->len * 4;
 
-                        if ((unsigned long long) bytesRecved < ipLen + sizeof(icmpErrorPacket)) {
-                            continue;
-                        }
-
                         icmpErrorPacket *errPack = (icmpErrorPacket *) (recvBuffer.data() + ipLen);
 
                         if ((errPack->icmpHdr.type == 11 && errPack->icmpHdr.code == 0)
                             || (errPack->icmpHdr.type == 3 && errPack->icmpHdr.code == 3)) {
                             GUID recvedGuid = errPack->data;
 
-                            if (!IsEqualGUID(origGuid, recvedGuid)) {
+                            // Проверка совпадения GUID
+                            if ((errPack->icmpHdr.type == 11 && errPack->icmpHdr.code == 0)
+                                && (!IsEqualGUID(origGuid, recvedGuid))) {
                                 continue;
+                            }
+
+                            // При получении пакета с ошибкой 3:3, GUID не приходит
+                            if (errPack->icmpHdr.type == 3 && errPack->icmpHdr.code == 3) {
+                                // Проверка совпадения IP-адреса
+                                if (errPack->origIpHdr.destIp != destAddr.sin_addr.s_addr) {
+                                    continue;
+                                }
+
+                                // Проверка совпадения порта
+                                // Порт из errPack переводится из сетевого в хостовый порядок байт
+                                if (ntohs(errPack->origUdpHdr.destPort) != sendPort) {
+                                    continue;
+                                }
+
+                                destGetted = true;
                             }
 
                             attemptSuccess = true;
@@ -369,16 +384,6 @@ void traceroute(string addr, int maxHops)
 
                                 addrGetted = true;
                             }
-
-                            if (errPack->icmpHdr.type == 3 && errPack->icmpHdr.code == 3) {
-                                cout << addrInfo << endl;
-
-                                closesocket(sendSock);
-                                closesocket(recvSock);
-
-                                cout << "Достигнут целевой узел" << endl;
-                                return;
-                            }
                         }
                     }
                     if (attemptSuccess)
@@ -388,6 +393,19 @@ void traceroute(string addr, int maxHops)
         }
         if (addrGetted)
             cout << addrInfo;
+
+        // Вывод информации о достижении целевого узла
+        if (destGetted) {
+            cout << "\tДостигнут целевой узел" << endl;
+            cout << endl;
+            break;
+        }
+        // Вывод информации о том, что целевой узел
+        // не был достигнут за отведенное число шагов
+        else if (ttl == maxHops) {
+            cout << "Целевой узел не был достигнут за " << maxHops << " шагов." << endl;
+            cout << endl;
+        }
     }
 
     closesocket(sendSock);

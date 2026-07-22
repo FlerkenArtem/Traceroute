@@ -168,7 +168,11 @@ void traceroute(string addr, int maxHops)
 
     if (recvSock == INVALID_SOCKET) {
         int err = WSAGetLastError();
-        cerr << "Ошибка создания сокета на прием: " << err << endl;
+        if (err == WSAEACCES)
+            cerr << "Для создания сырых сокетов необходимы права администратора. " << endl
+                 << "Перезапустите программу от имени администратора.";
+        else
+            cerr << "Ошибка создания сокета на прием: " << err << endl;
         return;
     }
 

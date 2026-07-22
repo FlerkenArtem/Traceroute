@@ -693,10 +693,10 @@ void tracert(string addr, int maxHops)
                                             addrInfo += "\t";
                                             addrInfo += ipStr;
                                         }
-                                    }
 
-                                    // Получен адрес
-                                    addrGetted = true;
+                                        // Получен адрес
+                                        addrGetted = true;
+                                    }
                                 } else {
                                     cout << "*\t";
                                 }

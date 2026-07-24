@@ -161,7 +161,7 @@ void traceroute(string addr, int maxHops)
 
     cout << "Трассировка маршрута к " << hostBuf << " ["
          << inet_ntop(AF_INET, &destAddr.sin_addr, ipBuf, sizeof(ipBuf)) << "] " << endl
-         << "с максимальным числом прыжков " << maxHops << ":" << endl;
+         << "с максимальным числом прыжков " << maxHops << ":";
 
     // ICMP-сокет для получения
     SOCKET recvSock = socket(AF_INET, SOCK_RAW, IPPROTO_IP);
@@ -169,7 +169,8 @@ void traceroute(string addr, int maxHops)
     if (recvSock == INVALID_SOCKET) {
         int err = WSAGetLastError();
         if (err == WSAEACCES)
-            cerr << "Для создания сырых сокетов необходимы права администратора. " << endl
+            cerr << endl
+                 << "Для создания сырых сокетов необходимы права администратора. " << endl
                  << "Перезапустите программу от имени администратора.";
         else
             cerr << "Ошибка создания сокета на прием: " << err << endl;
@@ -179,7 +180,7 @@ void traceroute(string addr, int maxHops)
     sockaddr_in localAddr;
     localAddr.sin_family = AF_INET;
     localAddr.sin_port = htons(0);
-    localAddr.sin_addr.s_addr = getLocalIP();
+    localAddr.sin_addr.s_addr = INADDR_ANY;
 
     if (bind(recvSock, (sockaddr *) &localAddr, sizeof(localAddr)) == SOCKET_ERROR) {
         int err = WSAGetLastError();
@@ -400,16 +401,15 @@ void traceroute(string addr, int maxHops)
 
         // Вывод информации о достижении целевого узла
         if (destGetted) {
-            cout << "\tДостигнут целевой узел" << endl;
-            cout << endl;
+            cout << endl << "\tДостигнут целевой узел" << endl << endl;
             break;
         }
         // Вывод информации о том, что целевой узел
         // не был достигнут за отведенное число шагов
-        else if (ttl == maxHops) {
-            cout << "Целевой узел не был достигнут за " << maxHops << " шагов." << endl;
-            cout << endl;
-        }
+        else if (ttl == maxHops)
+            cout << endl
+                 << "\tЦелевой узел не был достигнут за " << maxHops << " шагов." << endl
+                 << endl;
     }
 
     closesocket(sendSock);
@@ -626,13 +626,11 @@ void tracert(string addr, int maxHops)
                                     // Запись имени узла или его IP-адреса в строку
                                     if (!addrGetted) {
                                         if (dnsRes == 0 && strcmp(hostName, ipStr) != 0) {
-                                            addrInfo += "\t";
                                             addrInfo += hostName;
                                             addrInfo += "\t(";
                                             addrInfo += ipStr;
                                             addrInfo += ")";
                                         } else {
-                                            addrInfo += "\t";
                                             addrInfo += ipStr;
                                         }
 
@@ -685,13 +683,11 @@ void tracert(string addr, int maxHops)
                                     // Запись имени узла или его IP-адреса в строку
                                     if (!addrGetted) {
                                         if (dnsRes == 0 && strcmp(hostName, ipStr) != 0) {
-                                            addrInfo += "\t";
                                             addrInfo += hostName;
                                             addrInfo += "\t(";
                                             addrInfo += ipStr;
                                             addrInfo += ")";
                                         } else {
-                                            addrInfo += "\t";
                                             addrInfo += ipStr;
                                         }
 
@@ -725,15 +721,13 @@ void tracert(string addr, int maxHops)
 
         // Вывод информации о достижении целевого узла
         if (destination) {
-            cout << "\tДостигнут целевой узел" << endl;
-            cout << endl;
+            cout << "\tДостигнут целевой узел" << endl << endl;
             break;
         }
         // Вывод информации о том, что целевой узел
         // не был достигнут за отведенное число шагов
         else if (ttl == maxHops) {
-            cout << "Целевой узел не был достигнут за " << maxHops << " шагов." << endl;
-            cout << endl;
+            cout << "\tЦелевой узел не был достигнут за " << maxHops << " шагов." << endl << endl;
             break;
         }
     }

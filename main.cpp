@@ -605,7 +605,7 @@ void tracert(string addr, int maxHops)
                                 GUID recvedGuid = recvPack->data;
 
                                 // Проверка соответствия оригинального и полученного GUID
-                                if (origGuid == recvedGuid) {
+                                if (IsEqualGUID(origGuid, recvedGuid)) {
                                     // Получение DNS-имени хоста
                                     char hostName[NI_MAXHOST];
                                     int dnsRes = getnameinfo((SOCKADDR *) &fromAddr,
@@ -664,7 +664,7 @@ void tracert(string addr, int maxHops)
                                 // Получение GUID из сообщения
                                 GUID recvData = errorPack.origData;
 
-                                if (origGuid == recvData) {
+                                if (IsEqualGUID(origGuid, recvData)) {
                                     // Получение DNS-имени хоста
                                     char hostName[NI_MAXHOST];
                                     int dnsRes = getnameinfo((SOCKADDR *) &fromAddr,

@@ -543,12 +543,13 @@ void tracert(string addr, int maxHops)
             // Полученные байты
             int bytesRecved;
 
-            if (!FD_ISSET(sock, &fdSet)) {
+            if (selectRes <= 0) {
                 cout << "*\t";
                 continue;
-            }
-
-            if (selectRes > 0) {
+            } else if (!FD_ISSET(sock, &fdSet)) {
+                cout << "*\t";
+                continue;
+            } else {
                 int recvError = 0;
 
                 do {
@@ -713,12 +714,6 @@ void tracert(string addr, int maxHops)
                         }
                     }
                 } while (recvError != WSAEWOULDBLOCK);
-
-                // Обработка истечения таймаута
-            } else if (selectRes == 0) {
-                cout << "*\t";
-            } else {
-                return;
             }
 
             // Вывод адреса после последней попытки

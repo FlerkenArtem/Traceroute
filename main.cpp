@@ -86,7 +86,7 @@ unsigned short calculateChecksum(unsigned short *buffer, int size);
 void errors(unsigned char charType, unsigned char charCode);
 
 /// Получение локального IP-адреса
-unsigned long getLocalIP();
+unsigned long getLocalIP(string addr);
 
 /// Точка входа в программу
 int main(int argc, char *argv[])
@@ -180,7 +180,7 @@ void traceroute(string addr, int maxHops)
     sockaddr_in localAddr;
     localAddr.sin_family = AF_INET;
     localAddr.sin_port = htons(0);
-    localAddr.sin_addr.s_addr = getLocalIP();
+    localAddr.sin_addr.s_addr = getLocalIP(addr);
 
     if (bind(recvSock, (sockaddr *) &localAddr, sizeof(localAddr)) == SOCKET_ERROR) {
         int err = WSAGetLastError();
@@ -825,7 +825,7 @@ void errors(unsigned char charType, unsigned char charCode)
     cerr << endl;
 }
 
-unsigned long getLocalIP()
+unsigned long getLocalIP(string addr)
 {
     SOCKET udpSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP); // Создание сокета UDP
     if (udpSock == INVALID_SOCKET)
@@ -833,7 +833,7 @@ unsigned long getLocalIP()
 
     sockaddr_in loopback;
     loopback.sin_family = AF_INET;
-    int addrRes = inet_pton(AF_INET, "8.8.8.8", &(loopback.sin_addr));
+    int addrRes = inet_pton(AF_INET, addr.c_str(), &(loopback.sin_addr));
 
     if (addrRes == 0) {
         cerr << "Ошибка подключения к адресу: Неверный формат IP-адреса." << endl;

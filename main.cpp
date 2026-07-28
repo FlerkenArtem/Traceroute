@@ -180,7 +180,7 @@ void traceroute(string addr, int maxHops)
     sockaddr_in localAddr;
     localAddr.sin_family = AF_INET;
     localAddr.sin_port = htons(0);
-    localAddr.sin_addr.s_addr = INADDR_ANY;
+    localAddr.sin_addr.s_addr = getLocalIP();
 
     if (bind(recvSock, (sockaddr *) &localAddr, sizeof(localAddr)) == SOCKET_ERROR) {
         int err = WSAGetLastError();
@@ -833,7 +833,16 @@ unsigned long getLocalIP()
 
     sockaddr_in loopback;
     loopback.sin_family = AF_INET;
-    loopback.sin_addr.s_addr = inet_addr("8.8.8.8");
+    int addrRes = inet_pton(AF_INET, "8.8.8.8", &(loopback.sin_addr));
+
+    if (addrRes == 0) {
+        cerr << "Ошибка подключения к адресу: Неверный формат IP-адреса." << endl;
+        return INADDR_ANY;
+    } else if (addrRes < 0) {
+        cerr << "Ошибка подключения к адресу: Неподдерживаемое семейство протоколов" << endl;
+        return INADDR_ANY;
+    }
+
     loopback.sin_port = htons(53); // Порт DNS
 
     // Подключение к адресу

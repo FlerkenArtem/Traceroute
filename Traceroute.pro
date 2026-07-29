@@ -7,3 +7,5 @@ SOURCES += \
         main.cpp
 
 win32:LIBS += -lws2_32 -lole32
+
+HEADERS +=

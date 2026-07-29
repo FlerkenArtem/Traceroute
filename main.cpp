@@ -1,6 +1,7 @@
 #include <chrono>
 #include <combaseapi.h>
 #include <iostream>
+#include <map>
 #include <string>
 #include <vector>
 #include <winsock2.h>
@@ -71,6 +72,34 @@ struct tracertIcmpErrorPacket
     GUID origData;
 };
 
+/// Дополнительная информация об отправке
+struct sendInfo
+{
+    /* 
+     * Время отправки. 
+     * Часам присвоено время начала эпохи по-умолчанию.
+     */
+    steady_clock::time_point sendTime = {};
+
+    /* 
+     * Время получения. 
+     * Часам присвоено время начала эпохи по-умолчанию.
+     */
+    steady_clock::time_point recvTime = {};
+
+    // Время жизни пакета.
+    int ttl;
+
+    // Попытка на которой был отправлен пакет.
+    int attempt;
+
+    // IP-адрес узла.
+    string ipStr;
+
+    // DNS-имя узла.
+    string hostName;
+};
+
 #pragma pack(pop)
 
 /// Определение маршрута
@@ -87,6 +116,9 @@ void errors(unsigned char charType, unsigned char charCode);
 
 /// Получение локального IP-адреса
 unsigned long getLocalIP(string addr);
+
+/// Оператор сравнения 2 GUID
+bool operator<(const GUID &guid1, const GUID &guid2);
 
 /// Точка входа в программу
 int main(int argc, char *argv[])
@@ -119,6 +151,373 @@ int main(int argc, char *argv[])
     return 0;
 }
 
+void traceroute(string addr, int maxHops)
+{
+    WORD wVersionRequested = MAKEWORD(2, 2);
+    WSADATA wsaData;
+
+    int err = WSAStartup(wVersionRequested, &wsaData);
+    if (err != 0) {
+        return;
+    }
+
+    if (LOBYTE(wsaData.wVersion) != 2 || HIBYTE(wsaData.wVersion) != 2) {
+        WSACleanup();
+        return;
+    }
+
+    addrinfo hints{};
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+
+    addrinfo *result = nullptr;
+
+    if (getaddrinfo(addr.c_str(), nullptr, &hints, &result) != 0) {
+        cerr << "Ошибка разрешения имени" << endl;
+        return;
+    }
+
+    sockaddr_in destAddr = *(sockaddr_in *) result->ai_addr;
+    freeaddrinfo(result);
+
+    char hostBuf[NI_MAXHOST];
+    char ipBuf[INET_ADDRSTRLEN];
+
+    getnameinfo((sockaddr *) &destAddr,
+                sizeof(destAddr),
+                hostBuf,
+                sizeof(hostBuf),
+                nullptr,
+                0,
+                NI_NUMERICSERV);
+
+    cout << "Трассировка маршрута к " << hostBuf << " ["
+         << inet_ntop(AF_INET, &destAddr.sin_addr, ipBuf, sizeof(ipBuf)) << "] " << endl
+         << "с максимальным числом прыжков " << maxHops << ":";
+
+    // ICMP-сокет для получения
+    SOCKET recvSock = socket(AF_INET, SOCK_RAW, IPPROTO_IP);
+
+    if (recvSock == INVALID_SOCKET) {
+        int err = WSAGetLastError();
+        if (err == WSAEACCES)
+            cerr << endl
+                 << "Для создания сырых сокетов необходимы права администратора. " << endl
+                 << "Перезапустите программу от имени администратора.";
+        else
+            cerr << "Ошибка создания сокета на прием: " << err << endl;
+        return;
+    }
+
+    sockaddr_in localAddr;
+    localAddr.sin_family = AF_INET;
+    localAddr.sin_port = htons(0);
+    localAddr.sin_addr.s_addr = getLocalIP(addr);
+
+    if (bind(recvSock, (sockaddr *) &localAddr, sizeof(localAddr)) == SOCKET_ERROR) {
+        int err = WSAGetLastError();
+        cerr << "Ошибка привязки принимающего сокета к локальному концу: " << err << endl;
+        return;
+    }
+
+    DWORD dwValue = RCVALL_ON;
+    DWORD dwBytesReturned = 0;
+
+    if (WSAIoctl(recvSock,
+                 SIO_RCVALL,
+                 &dwValue,
+                 sizeof(dwValue),
+                 nullptr,
+                 0,
+                 &dwBytesReturned,
+                 nullptr,
+                 nullptr)
+        == SOCKET_ERROR) {
+        int err = WSAGetLastError();
+        cerr << "Ошибка при переводе сокета в неразборчивый режим: " << err << endl;
+        return;
+    }
+
+    // Перевод сокета в неблокирующий режим
+    unsigned long mode = 1;
+    int unblock = ioctlsocket(recvSock, FIONBIO, &mode);
+
+    if (unblock == SOCKET_ERROR) {
+        cerr << "Ошибка перевода сокета в неблокирующий режим: " << WSAGetLastError() << endl;
+        return;
+    }
+
+    // UDP-сокет для отправки
+    SOCKET sendSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (sendSock == INVALID_SOCKET) {
+        cerr << "Ошибка создания сокета на отправку: " << WSAGetLastError() << endl;
+        return;
+    }
+
+    // Размер буфера для приема данных в байтах
+    const int bufferSize = 65535;
+
+    // Буфер приема данных
+    vector<char> recvBuffer;
+
+    // Время жизни пакета
+    int ttl = 0;
+
+    // Порт удаленного конца
+    int sendPort = 0;
+
+    // Счетчик попыток на ttl
+    int attempt = 0;
+
+    // Флаг получения последнего пакета
+    bool lastPackGetted = false;
+
+    // Флаг достижения цели
+    bool destGetted = false;
+
+    // Время отправки последнего пакета
+    steady_clock::time_point lastSendTime;
+
+    // Словарь по GUID и дополнительной информации об отправке
+    map<GUID, sendInfo> sended;
+
+    // Последний отправленный GUID
+    GUID lastSendGuid{};
+
+    for (int i = 0; i < maxHops * 3;) {
+        /*
+         * Отправка пакетов присходит раз в секунду. 
+         * Если пакет на итерации не отправляется,
+         * счетчик итераций не увеличивается.
+         * При этом прием пакетов продолжается.
+         */
+
+        if (i == 0 || steady_clock::now() - lastSendTime > 1s) {
+            if (ttl != 0) {
+                // Обработка неполучения пакета
+                if (!lastPackGetted)
+                    cout << "*\t";
+                // Вывод информации о прошлой итерации.
+                else {
+                    if (
+                        // не получен
+                        sended[lastSendGuid].recvTime < sended[lastSendGuid].sendTime
+
+                        // получен позже чем через секунду после отправки
+                        || sended[lastSendGuid].recvTime - sended[lastSendGuid].sendTime > 1s) {
+                        cout << "*\t";
+                    } else {
+                        duration<double, milli> diff = sended[lastSendGuid].recvTime
+                                                       - sended[lastSendGuid].sendTime;
+                        if (diff.count() < 1)
+                            cout << "<1\t";
+                        else
+                            cout << (int) diff.count() << "\t";
+
+                        if (attempt == 2) {
+                            if (sended[lastSendGuid].ipStr != sended[lastSendGuid].hostName)
+                                cout << sended[lastSendGuid].hostName + " ("
+                                            + sended[lastSendGuid].ipStr + ")";
+                            else
+                                cout << sended[lastSendGuid].ipStr;
+                        }
+                    }
+                }
+            }
+
+            // Увеличение счетчика итераций
+            i++;
+
+            // Расчет номера текущей попытки на текущем ttl
+            attempt = i % 3;
+
+            // Сброс флага
+            lastPackGetted = false;
+
+            /*
+             * Увеличение ttl и порта
+             * происходит только на каждой
+             * 3 итерации цикла.
+             * 3 попытки на 1 ttl и порт.
+             */
+
+            if (attempt == 0) {
+                // Обработка достижения цели
+                if (destGetted)
+                    return;
+
+                ttl++;
+                cout << endl << ttl << "\t";
+
+                // Порт на текущей итерации
+                sendPort = 33434 + ttl;
+
+                // Установка порта
+                destAddr.sin_port = htons(sendPort);
+
+                // Установка TLL
+                if (setsockopt(sendSock, IPPROTO_IP, IP_TTL, (char *) &ttl, sizeof(ttl))
+                    == SOCKET_ERROR) {
+                    int err = WSAGetLastError();
+                    cerr << "Ошибка установки TTL на отправляющий сокет: " << err << endl;
+                    return;
+                }
+            }
+
+            // Исходный GUID
+            GUID origGuid{};
+
+            // Обработка ошибки при создании GUID
+            if (CoCreateGuid(&origGuid) != S_OK)
+                continue;
+
+            // Байт отправлено
+            int bytesSended = sendto(sendSock,
+                                     (char *) &origGuid,
+                                     sizeof(origGuid),
+                                     0,
+                                     (sockaddr *) &destAddr,
+                                     sizeof(destAddr));
+
+            // Обработка ошибки отправки
+            if (bytesSended == SOCKET_ERROR)
+                continue;
+
+            // Заполнение параметров текущей отправки
+            lastSendGuid = origGuid;
+            sended[origGuid].ttl = ttl;
+            sended[origGuid].attempt = attempt;
+            lastSendTime = steady_clock::now();
+            sended[origGuid].sendTime = lastSendTime;
+        }
+
+        // Получение пакетов
+
+        fd_set fdSet{};
+        FD_ZERO(&fdSet);
+        FD_SET(recvSock, &fdSet);
+
+        timeval timeout{};
+        timeout.tv_sec = 1;
+        timeout.tv_usec = 0;
+
+        int selectRes = select(0, &fdSet, nullptr, nullptr, &timeout);
+
+        if (selectRes <= 0) {
+            continue;
+        }
+
+        if (FD_ISSET(recvSock, &fdSet)) {
+            sockaddr_in fromAddr{};
+            int error = 0;
+
+            int fromSize = sizeof(fromAddr);
+            recvBuffer.resize(bufferSize);
+            int bytesRecved = recvfrom(recvSock,
+                                       recvBuffer.data(),
+                                       bufferSize,
+                                       0,
+                                       (sockaddr *) &fromAddr,
+                                       &fromSize);
+
+            if (bytesRecved == SOCKET_ERROR) {
+                error = WSAGetLastError();
+                if (error != WSAEWOULDBLOCK) {
+                    cerr << "Ошибка приема: " << error;
+                    return;
+                } else {
+                    continue;
+                }
+            } else {
+                ipHeader *ipHdr = (ipHeader *) recvBuffer.data();
+
+                if (ipHdr->proto != IPPROTO_ICMP) {
+                    continue;
+                }
+
+                int ipLen = ipHdr->len * 4;
+
+                icmpErrorPacket *errPack = (icmpErrorPacket *) (recvBuffer.data() + ipLen);
+
+                if ((errPack->icmpHdr.type == 11 && errPack->icmpHdr.code == 0)
+                    || (errPack->icmpHdr.type == 3 && errPack->icmpHdr.code == 3)) {
+                    GUID recvedGuid = errPack->data;
+
+                    if (errPack->icmpHdr.type == 11 && errPack->icmpHdr.code == 0) {
+                        // Проверка совпадения GUID
+                        for (const auto &guidInfo : sended) {
+                            GUID guid = guidInfo.first;
+                            if (!IsEqualGUID(guid, recvedGuid))
+                                continue;
+                            else {
+                                sended[recvedGuid].recvTime = steady_clock::now();
+
+                                // Получение IP-адреса
+                                char ipStr[INET_ADDRSTRLEN];
+                                inet_ntop(AF_INET, &fromAddr.sin_addr, ipStr, sizeof(ipStr));
+                                sended[recvedGuid].ipStr = ipStr;
+
+                                // Получение DNS-имени
+                                char hostName[NI_MAXHOST];
+                                int dnsRes = getnameinfo((sockaddr *) &fromAddr,
+                                                         sizeof(fromAddr),
+                                                         hostName,
+                                                         NI_MAXHOST,
+                                                         nullptr,
+                                                         0,
+                                                         0);
+                                if (dnsRes == 0 && strcmp(hostName, ipStr) != 0)
+                                    sended[recvedGuid].hostName = hostName;
+                                else
+                                    sended[recvedGuid].hostName = ipStr;
+                            }
+                        }
+                        lastPackGetted = true;
+                    }
+
+                    // При получении пакета с ошибкой 3:3, GUID не приходит
+                    if (errPack->icmpHdr.type == 3 && errPack->icmpHdr.code == 3) {
+                        // Проверка совпадения IP-адреса
+                        if (errPack->origIpHdr.destIp != destAddr.sin_addr.s_addr) {
+                            continue;
+                        }
+
+                        // Проверка совпадения порта
+                        // Порт из errPack переводится из сетевого в хостовый порядок байт
+                        if (ntohs(errPack->origUdpHdr.destPort) != sendPort) {
+                            continue;
+                        }
+
+                        sended[lastSendGuid].recvTime = steady_clock::now();
+
+                        // Получение IP-адреса
+                        char ipStr[INET_ADDRSTRLEN];
+                        inet_ntop(AF_INET, &fromAddr.sin_addr, ipStr, sizeof(ipStr));
+                        sended[lastSendGuid].ipStr = ipStr;
+
+                        // Получение DNS-имени
+                        char hostName[NI_MAXHOST];
+                        int dnsRes = getnameinfo((sockaddr *) &fromAddr,
+                                                 sizeof(fromAddr),
+                                                 hostName,
+                                                 NI_MAXHOST,
+                                                 nullptr,
+                                                 0,
+                                                 0);
+                        if (dnsRes == 0 && strcmp(hostName, ipStr) != 0)
+                            sended[lastSendGuid].hostName = hostName;
+                        else
+                            sended[lastSendGuid].hostName = ipStr;
+
+                        destGetted = true;
+                    }
+                }
+            }
+        }
+    }
+}
+
+/* Старая функция traceroute
 void traceroute(string addr, int maxHops)
 {
     WORD wVersionRequested = MAKEWORD(2, 2);
@@ -416,6 +815,7 @@ void traceroute(string addr, int maxHops)
     closesocket(recvSock);
     WSACleanup();
 }
+*/
 
 void tracert(string addr, int maxHops)
 {
@@ -861,4 +1261,23 @@ unsigned long getLocalIP(string addr)
 
     closesocket(udpSock);
     return localAddr.sin_addr.s_addr;
+}
+
+bool operator<(const GUID &guid1, const GUID &guid2)
+{
+    if (guid1.Data1 != guid2.Data1) {
+        return guid1.Data1 < guid2.Data1;
+    }
+    if (guid1.Data2 != guid2.Data2) {
+        return guid1.Data2 < guid2.Data2;
+    }
+    if (guid1.Data3 != guid2.Data3) {
+        return guid1.Data3 < guid2.Data3;
+    }
+    for (int i = 0; i < 8; i++) {
+        if (guid1.Data4[i] != guid2.Data4[i]) {
+            return guid1.Data4[i] < guid2.Data4[i];
+        }
+    }
+    return false;
 }

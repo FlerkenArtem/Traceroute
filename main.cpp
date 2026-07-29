@@ -94,10 +94,10 @@ struct sendInfo
     int attempt;
 
     // IP-адрес узла.
-    string ipStr;
+    string ipStr = "";
 
     // DNS-имя узла.
-    string hostName;
+    string hostName = "";
 };
 
 #pragma pack(pop)
@@ -315,11 +315,26 @@ void traceroute(string addr, int maxHops)
                             cout << (int) diff.count() << "\t";
 
                         if (attempt == 2) {
-                            if (sended[lastSendGuid].ipStr != sended[lastSendGuid].hostName)
-                                cout << sended[lastSendGuid].hostName + " ("
-                                            + sended[lastSendGuid].ipStr + ")";
-                            else
-                                cout << sended[lastSendGuid].ipStr;
+                            auto addrIt = sended.end();
+                            int maxAttempt = -1;
+                            for (auto it = sended.begin(); it != sended.end(); it++) {
+                                const sendInfo info = it->second;
+                                if (info.ttl == ttl && info.ipStr != "") {
+                                    if (info.attempt > maxAttempt) {
+                                        maxAttempt = info.attempt;
+                                        addrIt = it;
+                                    }
+                                }
+                            }
+
+                            if (addrIt != sended.end()) {
+                                GUID addrGuid = addrIt->first;
+                                if (sended[addrGuid].ipStr != sended[addrGuid].hostName)
+                                    cout << sended[addrGuid].hostName + " ("
+                                                + sended[addrGuid].ipStr + ")";
+                                else
+                                    cout << sended[addrGuid].ipStr;
+                            }
                         }
                     }
                 }
@@ -343,8 +358,10 @@ void traceroute(string addr, int maxHops)
 
             if (attempt == 0) {
                 // Обработка достижения цели
-                if (destGetted)
+                if (destGetted) {
+                    cout << "\tДостигнут целевой узел.";
                     return;
+                }
 
                 ttl++;
                 cout << endl << ttl << "\t";

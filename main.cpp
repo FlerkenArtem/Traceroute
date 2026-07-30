@@ -984,7 +984,7 @@ void tracert(string addr, int maxHops)
             i++;
 
             // Расчет номера текущей попытки на текущем ttl
-            attempt = i % 3;
+            attempt = (i - 1) % 3;
 
             // Сброс флага
             lastPackGetted = false;
@@ -999,50 +999,51 @@ void tracert(string addr, int maxHops)
             if (attempt == 0) {
                 // Обработка достижения цели
                 if (destination) {
-                    cout << "\tДостигнут целевой узел.";
+                    cout << endl << "\tДостигнут целевой узел." << endl;
                     return;
                 }
 
                 ttl++;
                 cout << endl << ttl << "\t";
-                // Исходный GUID
-                GUID origGuid{};
-
-                // Обработка ошибки при создании GUID
-                if (CoCreateGuid(&origGuid) != S_OK)
-                    continue;
-
-                // Формирование пакета на отправку
-                icmpPacket sendPack{};
-                sendPack.header.type = 8;
-                sendPack.header.code = 0;
-                sendPack.header.checkSum = 0;
-                sendPack.data = origGuid;
-                sendPack.header.checkSum = calculateChecksum((unsigned short *) &sendPack,
-                                                             sizeof(sendPack));
 
                 // Настройка TTL
                 setsockopt(sock, IPPROTO_IP, IP_TTL, (const char *) &ttl, sizeof(ttl));
-
-                // Байт отправлено
-                int bytesSended = sendto(sock,
-                                         (const char *) &sendPack,
-                                         sizeof(sendPack),
-                                         0,
-                                         (sockaddr *) &destAddr,
-                                         socklen_t(sizeof(destAddr)));
-
-                // Обработка ошибки отправки
-                if (bytesSended == SOCKET_ERROR)
-                    continue;
-
-                // Заполнение параметров текущей отправки
-                lastSendGuid = origGuid;
-                sended[origGuid].ttl = ttl;
-                sended[origGuid].attempt = attempt;
-                lastSendTime = steady_clock::now();
-                sended[origGuid].sendTime = lastSendTime;
             }
+
+            // Исходный GUID
+            GUID origGuid{};
+
+            // Обработка ошибки при создании GUID
+            if (CoCreateGuid(&origGuid) != S_OK)
+                continue;
+
+            // Формирование пакета на отправку
+            icmpPacket sendPack{};
+            sendPack.header.type = 8;
+            sendPack.header.code = 0;
+            sendPack.header.checkSum = 0;
+            sendPack.data = origGuid;
+            sendPack.header.checkSum = calculateChecksum((unsigned short *) &sendPack,
+                                                         sizeof(sendPack));
+
+            // Байт отправлено
+            int bytesSended = sendto(sock,
+                                     (const char *) &sendPack,
+                                     sizeof(sendPack),
+                                     0,
+                                     (sockaddr *) &destAddr,
+                                     socklen_t(sizeof(destAddr)));
+
+            // Обработка ошибки отправки
+            if (bytesSended == SOCKET_ERROR)
+                continue;
+
+            // Заполнение параметров текущей отправки
+            lastSendGuid = origGuid;
+            sended[origGuid].ttl = ttl;
+            sended[origGuid].attempt = attempt;
+            lastSendTime = steady_clock::now();
+            sended[origGuid].sendTime = lastSendTime;
         }
 
         // Получение пакетов

@@ -281,6 +281,9 @@ void traceroute(string addr, int maxHops)
     // Словарь по GUID и дополнительной информации об отправке
     map<GUID, sendInfo> sended;
 
+    // Словарь по соответствию GUID и портов, с которых они были отправлены
+    map<int, GUID> portsGuids;
+
     // Последний отправленный GUID
     GUID lastSendGuid{};
 
@@ -299,12 +302,7 @@ void traceroute(string addr, int maxHops)
                     cout << "*\t";
                 // Вывод информации о прошлой итерации.
                 else {
-                    if (
-                        // не получен
-                        sended[lastSendGuid].recvTime < sended[lastSendGuid].sendTime
-
-                        // получен позже чем через секунду после отправки
-                        || sended[lastSendGuid].recvTime - sended[lastSendGuid].sendTime > 1s) {
+                    if (sended[lastSendGuid].recvTime < sended[lastSendGuid].sendTime) {
                         cout << "*\t";
                     } else {
                         duration<double, milli> diff = sended[lastSendGuid].recvTime
@@ -313,29 +311,27 @@ void traceroute(string addr, int maxHops)
                             cout << "<1\t";
                         else
                             cout << (int) diff.count() << "\t";
-
-                        if (attempt == 2) {
-                            auto addrIt = sended.end();
-                            int maxAttempt = -1;
-                            for (auto it = sended.begin(); it != sended.end(); it++) {
-                                const sendInfo info = it->second;
-                                if (info.ttl == ttl && info.ipStr != "") {
-                                    if (info.attempt > maxAttempt) {
-                                        maxAttempt = info.attempt;
-                                        addrIt = it;
-                                    }
-                                }
-                            }
-
-                            if (addrIt != sended.end()) {
-                                GUID addrGuid = addrIt->first;
-                                if (sended[addrGuid].ipStr != sended[addrGuid].hostName)
-                                    cout << sended[addrGuid].hostName + " ("
-                                                + sended[addrGuid].ipStr + ")";
-                                else
-                                    cout << sended[addrGuid].ipStr;
+                    }
+                }
+                if (attempt == 2) {
+                    auto addrIt = sended.end();
+                    int maxAttempt = -1;
+                    for (auto it = sended.begin(); it != sended.end(); it++) {
+                        const sendInfo info = it->second;
+                        if (info.ttl == ttl && info.ipStr != "" && !info.ipStr.empty()) {
+                            if (info.attempt > maxAttempt) {
+                                maxAttempt = info.attempt;
+                                addrIt = it;
                             }
                         }
+                    }
+
+                    if (addrIt != sended.end()) {
+                        GUID addrGuid = addrIt->first;
+                        if (sended[addrGuid].ipStr != sended[addrGuid].hostName)
+                            cout << sended[addrGuid].hostName + " (" + sended[addrGuid].ipStr + ")";
+                        else
+                            cout << sended[addrGuid].ipStr;
                     }
                 }
             }
@@ -359,26 +355,12 @@ void traceroute(string addr, int maxHops)
             if (attempt == 0) {
                 // Обработка достижения цели
                 if (destGetted) {
-                    cout << "\tДостигнут целевой узел.";
+                    cout << endl << "\tДостигнут целевой узел." << endl;
                     return;
                 }
 
                 ttl++;
                 cout << endl << ttl << "\t";
-
-                // Порт на текущей итерации
-                sendPort = 33434 + ttl;
-
-                // Установка порта
-                destAddr.sin_port = htons(sendPort);
-
-                // Установка TLL
-                if (setsockopt(sendSock, IPPROTO_IP, IP_TTL, (char *) &ttl, sizeof(ttl))
-                    == SOCKET_ERROR) {
-                    int err = WSAGetLastError();
-                    cerr << "Ошибка установки TTL на отправляющий сокет: " << err << endl;
-                    return;
-                }
             }
 
             // Исходный GUID
@@ -387,6 +369,20 @@ void traceroute(string addr, int maxHops)
             // Обработка ошибки при создании GUID
             if (CoCreateGuid(&origGuid) != S_OK)
                 continue;
+
+            // Порт на текущей итерации
+            sendPort = 33434 + i;
+
+            // Установка порта
+            destAddr.sin_port = htons(sendPort);
+
+            // Установка TLL
+            if (setsockopt(sendSock, IPPROTO_IP, IP_TTL, (char *) &ttl, sizeof(ttl))
+                == SOCKET_ERROR) {
+                int err = WSAGetLastError();
+                cerr << "Ошибка установки TTL на отправляющий сокет: " << err << endl;
+                return;
+            }
 
             // Байт отправлено
             int bytesSended = sendto(sendSock,
@@ -402,6 +398,7 @@ void traceroute(string addr, int maxHops)
 
             // Заполнение параметров текущей отправки
             lastSendGuid = origGuid;
+            portsGuids[sendPort] = origGuid;
             sended[origGuid].ttl = ttl;
             sended[origGuid].attempt = attempt;
             lastSendTime = steady_clock::now();
@@ -499,18 +496,29 @@ void traceroute(string addr, int maxHops)
                             continue;
                         }
 
+                        // Полученный порт
+                        int recvedPort = ntohs(errPack->origUdpHdr.destPort);
+                        bool portFound = false;
+                        GUID recvedGUID{};
+
                         // Проверка совпадения порта
-                        // Порт из errPack переводится из сетевого в хостовый порядок байт
-                        if (ntohs(errPack->origUdpHdr.destPort) != sendPort) {
-                            continue;
+                        for (const auto &pair : portsGuids) {
+                            int itPort = pair.first;
+                            if (itPort == recvedPort) {
+                                recvedGUID = pair.second;
+                                portFound = true;
+                            }
                         }
 
-                        sended[lastSendGuid].recvTime = steady_clock::now();
+                        if (!portFound)
+                            continue;
+
+                        sended[recvedGUID].recvTime = steady_clock::now();
 
                         // Получение IP-адреса
                         char ipStr[INET_ADDRSTRLEN];
                         inet_ntop(AF_INET, &fromAddr.sin_addr, ipStr, sizeof(ipStr));
-                        sended[lastSendGuid].ipStr = ipStr;
+                        sended[recvedGUID].ipStr = ipStr;
 
                         // Получение DNS-имени
                         char hostName[NI_MAXHOST];
@@ -522,10 +530,11 @@ void traceroute(string addr, int maxHops)
                                                  0,
                                                  0);
                         if (dnsRes == 0 && strcmp(hostName, ipStr) != 0)
-                            sended[lastSendGuid].hostName = hostName;
+                            sended[recvedGUID].hostName = hostName;
                         else
-                            sended[lastSendGuid].hostName = ipStr;
+                            sended[recvedGUID].hostName = ipStr;
 
+                        lastPackGetted = true;
                         destGetted = true;
                     }
                 }
@@ -953,29 +962,28 @@ void tracert(string addr, int maxHops)
                             cout << "<1\t";
                         else
                             cout << (int) diff.count() << "\t";
+                    }
+                }
 
-                        if (attempt == 2) {
-                            auto addrIt = sended.end();
-                            int maxAttempt = -1;
-                            for (auto it = sended.begin(); it != sended.end(); it++) {
-                                const sendInfo info = it->second;
-                                if (info.ttl == ttl && info.ipStr != "") {
-                                    if (info.attempt > maxAttempt) {
-                                        maxAttempt = info.attempt;
-                                        addrIt = it;
-                                    }
-                                }
-                            }
-
-                            if (addrIt != sended.end()) {
-                                GUID addrGuid = addrIt->first;
-                                if (sended[addrGuid].ipStr != sended[addrGuid].hostName)
-                                    cout << sended[addrGuid].hostName + " ("
-                                                + sended[addrGuid].ipStr + ")";
-                                else
-                                    cout << sended[addrGuid].ipStr;
+                if (attempt == 2) {
+                    auto addrIt = sended.end();
+                    int maxAttempt = -1;
+                    for (auto it = sended.begin(); it != sended.end(); it++) {
+                        const sendInfo info = it->second;
+                        if (info.ttl == ttl && info.ipStr != "") {
+                            if (info.attempt > maxAttempt) {
+                                maxAttempt = info.attempt;
+                                addrIt = it;
                             }
                         }
+                    }
+
+                    if (addrIt != sended.end()) {
+                        GUID addrGuid = addrIt->first;
+                        if (sended[addrGuid].ipStr != sended[addrGuid].hostName)
+                            cout << sended[addrGuid].hostName + " (" + sended[addrGuid].ipStr + ")";
+                        else
+                            cout << sended[addrGuid].ipStr;
                     }
                 }
             }

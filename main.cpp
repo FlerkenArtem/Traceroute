@@ -158,6 +158,7 @@ void traceroute(string addr, int maxHops)
 
     int err = WSAStartup(wVersionRequested, &wsaData);
     if (err != 0) {
+        WSACleanup();
         return;
     }
 
@@ -174,6 +175,7 @@ void traceroute(string addr, int maxHops)
 
     if (getaddrinfo(addr.c_str(), nullptr, &hints, &result) != 0) {
         cerr << "Ошибка разрешения имени" << endl;
+        WSACleanup();
         return;
     }
 
@@ -206,6 +208,8 @@ void traceroute(string addr, int maxHops)
                  << "Перезапустите программу от имени администратора.";
         else
             cerr << "Ошибка создания сокета на прием: " << err << endl;
+        closesocket(recvSock);
+        WSACleanup();
         return;
     }
 
@@ -217,6 +221,8 @@ void traceroute(string addr, int maxHops)
     if (bind(recvSock, (sockaddr *) &localAddr, sizeof(localAddr)) == SOCKET_ERROR) {
         int err = WSAGetLastError();
         cerr << "Ошибка привязки принимающего сокета к локальному концу: " << err << endl;
+        closesocket(recvSock);
+        WSACleanup();
         return;
     }
 
@@ -235,6 +241,8 @@ void traceroute(string addr, int maxHops)
         == SOCKET_ERROR) {
         int err = WSAGetLastError();
         cerr << "Ошибка при переводе сокета в неразборчивый режим: " << err << endl;
+        closesocket(recvSock);
+        WSACleanup();
         return;
     }
 
@@ -244,6 +252,8 @@ void traceroute(string addr, int maxHops)
 
     if (unblock == SOCKET_ERROR) {
         cerr << "Ошибка перевода сокета в неблокирующий режим: " << WSAGetLastError() << endl;
+        closesocket(recvSock);
+        WSACleanup();
         return;
     }
 
@@ -251,6 +261,9 @@ void traceroute(string addr, int maxHops)
     SOCKET sendSock = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (sendSock == INVALID_SOCKET) {
         cerr << "Ошибка создания сокета на отправку: " << WSAGetLastError() << endl;
+        closesocket(sendSock);
+        closesocket(recvSock);
+        WSACleanup();
         return;
     }
 
@@ -302,7 +315,12 @@ void traceroute(string addr, int maxHops)
                     cout << "*\t";
                 // Вывод информации о прошлой итерации.
                 else {
-                    if (sended[lastSendGuid].recvTime < sended[lastSendGuid].sendTime) {
+                    if (
+                        // не получен
+                        sended[lastSendGuid].recvTime < sended[lastSendGuid].sendTime
+
+                        // получен позже чем через секунду после отправки
+                        || sended[lastSendGuid].recvTime - sended[lastSendGuid].sendTime > 1s) {
                         cout << "*\t";
                     } else {
                         duration<double, milli> diff = sended[lastSendGuid].recvTime
@@ -356,6 +374,9 @@ void traceroute(string addr, int maxHops)
                 // Обработка достижения цели
                 if (destGetted) {
                     cout << endl << "\tДостигнут целевой узел." << endl;
+                    closesocket(sendSock);
+                    closesocket(recvSock);
+                    WSACleanup();
                     return;
                 }
 
@@ -381,6 +402,9 @@ void traceroute(string addr, int maxHops)
                 == SOCKET_ERROR) {
                 int err = WSAGetLastError();
                 cerr << "Ошибка установки TTL на отправляющий сокет: " << err << endl;
+                closesocket(sendSock);
+                closesocket(recvSock);
+                WSACleanup();
                 return;
             }
 
@@ -438,6 +462,9 @@ void traceroute(string addr, int maxHops)
                 error = WSAGetLastError();
                 if (error != WSAEWOULDBLOCK) {
                     cerr << "Ошибка приема: " << error;
+                    closesocket(sendSock);
+                    closesocket(recvSock);
+                    WSACleanup();
                     return;
                 } else {
                     continue;
@@ -541,6 +568,10 @@ void traceroute(string addr, int maxHops)
             }
         }
     }
+
+    closesocket(sendSock);
+    closesocket(recvSock);
+    WSACleanup();
 }
 
 void tracert(string addr, int maxHops)
@@ -550,6 +581,7 @@ void tracert(string addr, int maxHops)
 
     int err = WSAStartup(wVersionRequested, &wsaData);
     if (err != 0) {
+        WSACleanup();
         return;
     }
 
@@ -566,6 +598,7 @@ void tracert(string addr, int maxHops)
 
     if (getaddrinfo(addr.c_str(), nullptr, &hints, &result) != 0) {
         cerr << "Ошибка разрешения имени" << endl;
+        WSACleanup();
         return;
     }
 
@@ -592,6 +625,7 @@ void tracert(string addr, int maxHops)
     if (sock == INVALID_SOCKET) {
         int lastErr = WSAGetLastError();
         cerr << "Ошибка создания сокета: " << lastErr << endl;
+        closesocket(sock);
         WSACleanup();
         return;
     }
@@ -708,6 +742,8 @@ void tracert(string addr, int maxHops)
                 // Обработка достижения цели
                 if (destination) {
                     cout << endl << "\tДостигнут целевой узел." << endl;
+                    closesocket(sock);
+                    WSACleanup();
                     return;
                 }
 
@@ -903,11 +939,15 @@ void tracert(string addr, int maxHops)
                 recvError = WSAGetLastError();
                 if (recvError != WSAEWOULDBLOCK) {
                     cerr << "Возникла ошибка при получении: " << recvError << endl;
+                    closesocket(sock);
+                    WSACleanup();
                     return;
                 }
             }
         }
     }
+    closesocket(sock);
+    WSACleanup();
 }
 
 unsigned short calculateChecksum(unsigned short *buffer, int size)

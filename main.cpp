@@ -448,53 +448,98 @@ void traceroute(string addr, int maxHops)
         if (FD_ISSET(recvSock, &fdSet)) {
             sockaddr_in fromAddr{};
             int error = 0;
+            do {
+                int fromSize = sizeof(fromAddr);
+                recvBuffer.resize(bufferSize);
+                int bytesRecved = recvfrom(recvSock,
+                                           recvBuffer.data(),
+                                           bufferSize,
+                                           0,
+                                           (sockaddr *) &fromAddr,
+                                           &fromSize);
 
-            int fromSize = sizeof(fromAddr);
-            recvBuffer.resize(bufferSize);
-            int bytesRecved = recvfrom(recvSock,
-                                       recvBuffer.data(),
-                                       bufferSize,
-                                       0,
-                                       (sockaddr *) &fromAddr,
-                                       &fromSize);
-
-            if (bytesRecved == SOCKET_ERROR) {
-                error = WSAGetLastError();
-                if (error != WSAEWOULDBLOCK) {
-                    cerr << "Ошибка приема: " << error;
-                    closesocket(sendSock);
-                    closesocket(recvSock);
-                    WSACleanup();
-                    return;
+                if (bytesRecved == SOCKET_ERROR) {
+                    error = WSAGetLastError();
+                    if (error != WSAEWOULDBLOCK) {
+                        cerr << "Ошибка приема: " << error;
+                        closesocket(sendSock);
+                        closesocket(recvSock);
+                        WSACleanup();
+                        return;
+                    }
                 } else {
-                    continue;
-                }
-            } else {
-                ipHeader *ipHdr = (ipHeader *) recvBuffer.data();
+                    ipHeader *ipHdr = (ipHeader *) recvBuffer.data();
 
-                if (ipHdr->proto != IPPROTO_ICMP) {
-                    continue;
-                }
+                    if (ipHdr->proto != IPPROTO_ICMP) {
+                        continue;
+                    }
 
-                int ipLen = ipHdr->len * 4;
+                    int ipLen = ipHdr->len * 4;
 
-                icmpErrorPacket *errPack = (icmpErrorPacket *) (recvBuffer.data() + ipLen);
+                    icmpErrorPacket *errPack = (icmpErrorPacket *) (recvBuffer.data() + ipLen);
 
-                if ((errPack->icmpHdr.type == 11 && errPack->icmpHdr.code == 0)
-                    || (errPack->icmpHdr.type == 3 && errPack->icmpHdr.code == 3)) {
-                    GUID recvedGuid = errPack->data;
+                    if ((errPack->icmpHdr.type == 11 && errPack->icmpHdr.code == 0)
+                        || (errPack->icmpHdr.type == 3 && errPack->icmpHdr.code == 3)) {
+                        GUID recvedGuid = errPack->data;
 
-                    if (errPack->icmpHdr.type == 11 && errPack->icmpHdr.code == 0) {
-                        // Проверка совпадения GUID
-                        auto it = sended.find(recvedGuid);
+                        if (errPack->icmpHdr.type == 11 && errPack->icmpHdr.code == 0) {
+                            // Проверка совпадения GUID
+                            auto it = sended.find(recvedGuid);
 
-                        if (it != sended.end()) {
-                            it->second.recvTime = steady_clock::now();
+                            if (it != sended.end()) {
+                                it->second.recvTime = steady_clock::now();
+
+                                // Получение IP-адреса
+                                char ipStr[INET_ADDRSTRLEN];
+                                inet_ntop(AF_INET, &fromAddr.sin_addr, ipStr, sizeof(ipStr));
+                                it->second.ipStr = ipStr;
+
+                                // Получение DNS-имени
+                                char hostName[NI_MAXHOST];
+                                int dnsRes = getnameinfo((sockaddr *) &fromAddr,
+                                                         sizeof(fromAddr),
+                                                         hostName,
+                                                         NI_MAXHOST,
+                                                         nullptr,
+                                                         0,
+                                                         0);
+
+                                if (dnsRes == 0 && strcmp(hostName, ipStr) != 0)
+                                    it->second.hostName = hostName;
+                                else
+                                    it->second.hostName = ipStr;
+                            }
+                            lastPackGetted = true;
+                        }
+
+                        // При получении пакета с ошибкой 3:3, GUID не приходит
+                        if (errPack->icmpHdr.type == 3 && errPack->icmpHdr.code == 3) {
+                            // Проверка совпадения IP-адреса
+                            if (errPack->origIpHdr.destIp != destAddr.sin_addr.s_addr) {
+                                continue;
+                            }
+
+                            // Полученный порт
+                            int recvedPort = ntohs(errPack->origUdpHdr.destPort);
+                            bool portFound = false;
+                            GUID recvedGUID{};
+
+                            // Поиск полученного порта
+                            auto it = portsGuids.find(recvedPort);
+                            if (it != portsGuids.end()) {
+                                recvedGUID = it->second;
+                                portFound = true;
+                            }
+
+                            if (!portFound)
+                                continue;
+
+                            sended[recvedGUID].recvTime = steady_clock::now();
 
                             // Получение IP-адреса
                             char ipStr[INET_ADDRSTRLEN];
                             inet_ntop(AF_INET, &fromAddr.sin_addr, ipStr, sizeof(ipStr));
-                            it->second.ipStr = ipStr;
+                            sended[recvedGUID].ipStr = ipStr;
 
                             // Получение DNS-имени
                             char hostName[NI_MAXHOST];
@@ -505,63 +550,17 @@ void traceroute(string addr, int maxHops)
                                                      nullptr,
                                                      0,
                                                      0);
-
                             if (dnsRes == 0 && strcmp(hostName, ipStr) != 0)
-                                it->second.hostName = hostName;
+                                sended[recvedGUID].hostName = hostName;
                             else
-                                it->second.hostName = ipStr;
+                                sended[recvedGUID].hostName = ipStr;
+
+                            lastPackGetted = true;
+                            destGetted = true;
                         }
-                        lastPackGetted = true;
-                    }
-
-                    // При получении пакета с ошибкой 3:3, GUID не приходит
-                    if (errPack->icmpHdr.type == 3 && errPack->icmpHdr.code == 3) {
-                        // Проверка совпадения IP-адреса
-                        if (errPack->origIpHdr.destIp != destAddr.sin_addr.s_addr) {
-                            continue;
-                        }
-
-                        // Полученный порт
-                        int recvedPort = ntohs(errPack->origUdpHdr.destPort);
-                        bool portFound = false;
-                        GUID recvedGUID{};
-
-                        // Поиск полученного порта
-                        auto it = portsGuids.find(recvedPort);
-                        if (it != portsGuids.end()) {
-                            recvedGUID = it->second;
-                            portFound = true;
-                        }
-
-                        if (!portFound)
-                            continue;
-
-                        sended[recvedGUID].recvTime = steady_clock::now();
-
-                        // Получение IP-адреса
-                        char ipStr[INET_ADDRSTRLEN];
-                        inet_ntop(AF_INET, &fromAddr.sin_addr, ipStr, sizeof(ipStr));
-                        sended[recvedGUID].ipStr = ipStr;
-
-                        // Получение DNS-имени
-                        char hostName[NI_MAXHOST];
-                        int dnsRes = getnameinfo((sockaddr *) &fromAddr,
-                                                 sizeof(fromAddr),
-                                                 hostName,
-                                                 NI_MAXHOST,
-                                                 nullptr,
-                                                 0,
-                                                 0);
-                        if (dnsRes == 0 && strcmp(hostName, ipStr) != 0)
-                            sended[recvedGUID].hostName = hostName;
-                        else
-                            sended[recvedGUID].hostName = ipStr;
-
-                        lastPackGetted = true;
-                        destGetted = true;
                     }
                 }
-            }
+            } while (error != WSAEWOULDBLOCK);
         }
     }
 
@@ -805,138 +804,140 @@ void tracert(string addr, int maxHops)
         if (FD_ISSET(sock, &fdSet)) {
             int recvError = 0;
 
-            // Байт получено
-            int bytesRecved = recvfrom(sock,
-                                       recvBuffer.data(),
-                                       bufferSize,
-                                       0,
-                                       (sockaddr *) &fromAddr,
-                                       &fromAddrSize);
+            do {
+                // Байт получено
+                int bytesRecved = recvfrom(sock,
+                                           recvBuffer.data(),
+                                           bufferSize,
+                                           0,
+                                           (sockaddr *) &fromAddr,
+                                           &fromAddrSize);
 
-            if (bytesRecved != SOCKET_ERROR) {
-                if (bytesRecved <= 0) {
-                    continue;
-                }
-
-                // Получение IP-заголовка из буфера
-                ipHeader *ipHdr = (ipHeader *) recvBuffer.data();
-
-                // Вычисление длины IPv4 заголовка
-                int ipHeaderLen = ipHdr->len * 4;
-
-                // Проверка по длине,
-                // что полученный пакет содержит IP-заголовок
-                // и ICMP-пакет
-                if (bytesRecved < ipHeaderLen + (int) sizeof(icmpPacket)) {
-                    continue;
-                }
-
-                // Полученный ICMP-пакет
-                icmpPacket *recvPack = (icmpPacket *) (recvBuffer.data() + ipHeaderLen);
-
-                // Получение IP-адреса в текстовом формате
-                char ipStr[INET_ADDRSTRLEN] = {0};
-
-                inet_ntop(AF_INET, &(fromAddr.sin_addr), ipStr, INET_ADDRSTRLEN);
-
-                // Проверка целостности пакета
-                if (bytesRecved <= ipHeaderLen || ipHeaderLen < 20) {
-                    continue;
-                }
-
-                if (recvPack->header.type == 0 && recvPack->header.code == 0) {
-                    if (fromAddr.sin_family == AF_INET) {
-                        GUID recvedGuid = recvPack->data;
-
-                        // Проверка совпадения GUID
-                        auto it = sended.find(recvedGuid);
-
-                        if (it != sended.end()) {
-                            it->second.recvTime = steady_clock::now();
-
-                            // Получение IP-адреса
-                            char ipStr[INET_ADDRSTRLEN];
-                            inet_ntop(AF_INET, &fromAddr.sin_addr, ipStr, sizeof(ipStr));
-                            it->second.ipStr = ipStr;
-
-                            // Получение DNS-имени
-                            char hostName[NI_MAXHOST];
-                            int dnsRes = getnameinfo((sockaddr *) &fromAddr,
-                                                     sizeof(fromAddr),
-                                                     hostName,
-                                                     NI_MAXHOST,
-                                                     nullptr,
-                                                     0,
-                                                     0);
-
-                            if (dnsRes == 0 && strcmp(hostName, ipStr) != 0)
-                                it->second.hostName = hostName;
-                            else
-                                it->second.hostName = ipStr;
-                        }
-
-                        lastPackGetted = true;
-
-                        destination = true;
+                if (bytesRecved != SOCKET_ERROR) {
+                    if (bytesRecved <= 0) {
+                        continue;
                     }
-                } else { // Обработка пакетов с ошибками
-                    // Ошибка TTL
-                    if (recvPack->header.type == 11) {
-                        // Проверка по длине,
-                        // что полученный пакет содержит IP-заголовок
-                        // и ICMP-пакет с сообщением об ошибке
-                        if (bytesRecved < ipHeaderLen + (int) sizeof(tracertIcmpErrorPacket)) {
-                            continue;
+
+                    // Получение IP-заголовка из буфера
+                    ipHeader *ipHdr = (ipHeader *) recvBuffer.data();
+
+                    // Вычисление длины IPv4 заголовка
+                    int ipHeaderLen = ipHdr->len * 4;
+
+                    // Проверка по длине,
+                    // что полученный пакет содержит IP-заголовок
+                    // и ICMP-пакет
+                    if (bytesRecved < ipHeaderLen + (int) sizeof(icmpPacket)) {
+                        continue;
+                    }
+
+                    // Полученный ICMP-пакет
+                    icmpPacket *recvPack = (icmpPacket *) (recvBuffer.data() + ipHeaderLen);
+
+                    // Получение IP-адреса в текстовом формате
+                    char ipStr[INET_ADDRSTRLEN] = {0};
+
+                    inet_ntop(AF_INET, &(fromAddr.sin_addr), ipStr, INET_ADDRSTRLEN);
+
+                    // Проверка целостности пакета
+                    if (bytesRecved <= ipHeaderLen || ipHeaderLen < 20) {
+                        continue;
+                    }
+
+                    if (recvPack->header.type == 0 && recvPack->header.code == 0) {
+                        if (fromAddr.sin_family == AF_INET) {
+                            GUID recvedGuid = recvPack->data;
+
+                            // Проверка совпадения GUID
+                            auto it = sended.find(recvedGuid);
+
+                            if (it != sended.end()) {
+                                it->second.recvTime = steady_clock::now();
+
+                                // Получение IP-адреса
+                                char ipStr[INET_ADDRSTRLEN];
+                                inet_ntop(AF_INET, &fromAddr.sin_addr, ipStr, sizeof(ipStr));
+                                it->second.ipStr = ipStr;
+
+                                // Получение DNS-имени
+                                char hostName[NI_MAXHOST];
+                                int dnsRes = getnameinfo((sockaddr *) &fromAddr,
+                                                         sizeof(fromAddr),
+                                                         hostName,
+                                                         NI_MAXHOST,
+                                                         nullptr,
+                                                         0,
+                                                         0);
+
+                                if (dnsRes == 0 && strcmp(hostName, ipStr) != 0)
+                                    it->second.hostName = hostName;
+                                else
+                                    it->second.hostName = ipStr;
+                            }
+
+                            lastPackGetted = true;
+
+                            destination = true;
                         }
+                    } else { // Обработка пакетов с ошибками
+                        // Ошибка TTL
+                        if (recvPack->header.type == 11) {
+                            // Проверка по длине,
+                            // что полученный пакет содержит IP-заголовок
+                            // и ICMP-пакет с сообщением об ошибке
+                            if (bytesRecved < ipHeaderLen + (int) sizeof(tracertIcmpErrorPacket)) {
+                                continue;
+                            }
 
-                        // Формирование ICMP-сообщения об ошибке
-                        tracertIcmpErrorPacket errorPack = *(
-                            tracertIcmpErrorPacket *) (recvBuffer.data() + ipHeaderLen + 4);
-                        // 4 байта - отступ, заложенный для id и sequence
+                            // Формирование ICMP-сообщения об ошибке
+                            tracertIcmpErrorPacket errorPack = *(
+                                tracertIcmpErrorPacket *) (recvBuffer.data() + ipHeaderLen + 4);
+                            // 4 байта - отступ, заложенный для id и sequence
 
-                        // Получение GUID из сообщения
-                        GUID recvedGuid = errorPack.origData;
+                            // Получение GUID из сообщения
+                            GUID recvedGuid = errorPack.origData;
 
-                        // Проверка совпадения GUID
-                        auto it = sended.find(recvedGuid);
+                            // Проверка совпадения GUID
+                            auto it = sended.find(recvedGuid);
 
-                        if (it != sended.end()) {
-                            it->second.recvTime = steady_clock::now();
+                            if (it != sended.end()) {
+                                it->second.recvTime = steady_clock::now();
 
-                            // Получение IP-адреса
-                            char ipStr[INET_ADDRSTRLEN];
-                            inet_ntop(AF_INET, &fromAddr.sin_addr, ipStr, sizeof(ipStr));
-                            it->second.ipStr = ipStr;
+                                // Получение IP-адреса
+                                char ipStr[INET_ADDRSTRLEN];
+                                inet_ntop(AF_INET, &fromAddr.sin_addr, ipStr, sizeof(ipStr));
+                                it->second.ipStr = ipStr;
 
-                            // Получение DNS-имени
-                            char hostName[NI_MAXHOST];
-                            int dnsRes = getnameinfo((sockaddr *) &fromAddr,
-                                                     sizeof(fromAddr),
-                                                     hostName,
-                                                     NI_MAXHOST,
-                                                     nullptr,
-                                                     0,
-                                                     0);
+                                // Получение DNS-имени
+                                char hostName[NI_MAXHOST];
+                                int dnsRes = getnameinfo((sockaddr *) &fromAddr,
+                                                         sizeof(fromAddr),
+                                                         hostName,
+                                                         NI_MAXHOST,
+                                                         nullptr,
+                                                         0,
+                                                         0);
 
-                            if (dnsRes == 0 && strcmp(hostName, ipStr) != 0)
-                                it->second.hostName = hostName;
-                            else
-                                it->second.hostName = ipStr;
+                                if (dnsRes == 0 && strcmp(hostName, ipStr) != 0)
+                                    it->second.hostName = hostName;
+                                else
+                                    it->second.hostName = ipStr;
+                            }
+                            lastPackGetted = true;
+                        } else { // Обработка ошибок
+                            errors(recvPack->header.type, recvPack->header.code);
                         }
-                        lastPackGetted = true;
-                    } else { // Обработка ошибок
-                        errors(recvPack->header.type, recvPack->header.code);
+                    }
+                } else {
+                    recvError = WSAGetLastError();
+                    if (recvError != WSAEWOULDBLOCK) {
+                        cerr << "Возникла ошибка при получении: " << recvError << endl;
+                        closesocket(sock);
+                        WSACleanup();
+                        return;
                     }
                 }
-            } else {
-                recvError = WSAGetLastError();
-                if (recvError != WSAEWOULDBLOCK) {
-                    cerr << "Возникла ошибка при получении: " << recvError << endl;
-                    closesocket(sock);
-                    WSACleanup();
-                    return;
-                }
-            }
+            } while (recvError != WSAEWOULDBLOCK);
         }
     }
     closesocket(sock);

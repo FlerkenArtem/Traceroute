@@ -486,32 +486,30 @@ void traceroute(string addr, int maxHops)
 
                     if (errPack->icmpHdr.type == 11 && errPack->icmpHdr.code == 0) {
                         // Проверка совпадения GUID
-                        for (const auto &guidInfo : sended) {
-                            GUID guid = guidInfo.first;
-                            if (!IsEqualGUID(guid, recvedGuid))
-                                continue;
-                            else {
-                                sended[recvedGuid].recvTime = steady_clock::now();
+                        auto it = sended.find(recvedGuid);
 
-                                // Получение IP-адреса
-                                char ipStr[INET_ADDRSTRLEN];
-                                inet_ntop(AF_INET, &fromAddr.sin_addr, ipStr, sizeof(ipStr));
-                                sended[recvedGuid].ipStr = ipStr;
+                        if (it != sended.end()) {
+                            it->second.recvTime = steady_clock::now();
 
-                                // Получение DNS-имени
-                                char hostName[NI_MAXHOST];
-                                int dnsRes = getnameinfo((sockaddr *) &fromAddr,
-                                                         sizeof(fromAddr),
-                                                         hostName,
-                                                         NI_MAXHOST,
-                                                         nullptr,
-                                                         0,
-                                                         0);
-                                if (dnsRes == 0 && strcmp(hostName, ipStr) != 0)
-                                    sended[recvedGuid].hostName = hostName;
-                                else
-                                    sended[recvedGuid].hostName = ipStr;
-                            }
+                            // Получение IP-адреса
+                            char ipStr[INET_ADDRSTRLEN];
+                            inet_ntop(AF_INET, &fromAddr.sin_addr, ipStr, sizeof(ipStr));
+                            it->second.ipStr = ipStr;
+
+                            // Получение DNS-имени
+                            char hostName[NI_MAXHOST];
+                            int dnsRes = getnameinfo((sockaddr *) &fromAddr,
+                                                     sizeof(fromAddr),
+                                                     hostName,
+                                                     NI_MAXHOST,
+                                                     nullptr,
+                                                     0,
+                                                     0);
+
+                            if (dnsRes == 0 && strcmp(hostName, ipStr) != 0)
+                                it->second.hostName = hostName;
+                            else
+                                it->second.hostName = ipStr;
                         }
                         lastPackGetted = true;
                     }
@@ -528,13 +526,11 @@ void traceroute(string addr, int maxHops)
                         bool portFound = false;
                         GUID recvedGUID{};
 
-                        // Проверка совпадения порта
-                        for (const auto &pair : portsGuids) {
-                            int itPort = pair.first;
-                            if (itPort == recvedPort) {
-                                recvedGUID = pair.second;
-                                portFound = true;
-                            }
+                        // Поиск полученного порта
+                        auto it = portsGuids.find(recvedPort);
+                        if (it != portsGuids.end()) {
+                            recvedGUID = it->second;
+                            portFound = true;
                         }
 
                         if (!portFound)
@@ -853,33 +849,32 @@ void tracert(string addr, int maxHops)
                         GUID recvedGuid = recvPack->data;
 
                         // Проверка совпадения GUID
-                        for (const auto &guidInfo : sended) {
-                            GUID guid = guidInfo.first;
-                            if (!IsEqualGUID(guid, recvedGuid))
-                                continue;
-                            else {
-                                sended[recvedGuid].recvTime = steady_clock::now();
+                        auto it = sended.find(recvedGuid);
 
-                                // Получение IP-адреса
-                                char ipStr[INET_ADDRSTRLEN];
-                                inet_ntop(AF_INET, &fromAddr.sin_addr, ipStr, sizeof(ipStr));
-                                sended[recvedGuid].ipStr = ipStr;
+                        if (it != sended.end()) {
+                            it->second.recvTime = steady_clock::now();
 
-                                // Получение DNS-имени
-                                char hostName[NI_MAXHOST];
-                                int dnsRes = getnameinfo((sockaddr *) &fromAddr,
-                                                         sizeof(fromAddr),
-                                                         hostName,
-                                                         NI_MAXHOST,
-                                                         nullptr,
-                                                         0,
-                                                         0);
-                                if (dnsRes == 0 && strcmp(hostName, ipStr) != 0)
-                                    sended[recvedGuid].hostName = hostName;
-                                else
-                                    sended[recvedGuid].hostName = ipStr;
-                            }
+                            // Получение IP-адреса
+                            char ipStr[INET_ADDRSTRLEN];
+                            inet_ntop(AF_INET, &fromAddr.sin_addr, ipStr, sizeof(ipStr));
+                            it->second.ipStr = ipStr;
+
+                            // Получение DNS-имени
+                            char hostName[NI_MAXHOST];
+                            int dnsRes = getnameinfo((sockaddr *) &fromAddr,
+                                                     sizeof(fromAddr),
+                                                     hostName,
+                                                     NI_MAXHOST,
+                                                     nullptr,
+                                                     0,
+                                                     0);
+
+                            if (dnsRes == 0 && strcmp(hostName, ipStr) != 0)
+                                it->second.hostName = hostName;
+                            else
+                                it->second.hostName = ipStr;
                         }
+
                         lastPackGetted = true;
 
                         destination = true;
@@ -903,32 +898,30 @@ void tracert(string addr, int maxHops)
                         GUID recvedGuid = errorPack.origData;
 
                         // Проверка совпадения GUID
-                        for (const auto &guidInfo : sended) {
-                            GUID guid = guidInfo.first;
-                            if (!IsEqualGUID(guid, recvedGuid))
-                                continue;
-                            else {
-                                sended[recvedGuid].recvTime = steady_clock::now();
+                        auto it = sended.find(recvedGuid);
 
-                                // Получение IP-адреса
-                                char ipStr[INET_ADDRSTRLEN];
-                                inet_ntop(AF_INET, &fromAddr.sin_addr, ipStr, sizeof(ipStr));
-                                sended[recvedGuid].ipStr = ipStr;
+                        if (it != sended.end()) {
+                            it->second.recvTime = steady_clock::now();
 
-                                // Получение DNS-имени
-                                char hostName[NI_MAXHOST];
-                                int dnsRes = getnameinfo((sockaddr *) &fromAddr,
-                                                         sizeof(fromAddr),
-                                                         hostName,
-                                                         NI_MAXHOST,
-                                                         nullptr,
-                                                         0,
-                                                         0);
-                                if (dnsRes == 0 && strcmp(hostName, ipStr) != 0)
-                                    sended[recvedGuid].hostName = hostName;
-                                else
-                                    sended[recvedGuid].hostName = ipStr;
-                            }
+                            // Получение IP-адреса
+                            char ipStr[INET_ADDRSTRLEN];
+                            inet_ntop(AF_INET, &fromAddr.sin_addr, ipStr, sizeof(ipStr));
+                            it->second.ipStr = ipStr;
+
+                            // Получение DNS-имени
+                            char hostName[NI_MAXHOST];
+                            int dnsRes = getnameinfo((sockaddr *) &fromAddr,
+                                                     sizeof(fromAddr),
+                                                     hostName,
+                                                     NI_MAXHOST,
+                                                     nullptr,
+                                                     0,
+                                                     0);
+
+                            if (dnsRes == 0 && strcmp(hostName, ipStr) != 0)
+                                it->second.hostName = hostName;
+                            else
+                                it->second.hostName = ipStr;
                         }
                         lastPackGetted = true;
                     } else { // Обработка ошибок

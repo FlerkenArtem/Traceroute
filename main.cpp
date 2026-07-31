@@ -340,7 +340,7 @@ void traceroute(string addr, int maxHops)
             i++;
 
             // Расчет номера текущей попытки на текущем ttl
-            attempt = i % 3;
+            attempt = (i - 1) % 3;
 
             // Сброс флага
             lastPackGetted = false;

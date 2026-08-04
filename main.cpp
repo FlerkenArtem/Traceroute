@@ -102,6 +102,8 @@ struct sendInfo
 
 #pragma pack(pop)
 
+const GUID GUID_NULL = {0, 0, 0, {0, 0, 0, 0, 0, 0, 0, 0}};
+
 /// Определение маршрута
 void traceroute(string addr, int maxHops = 30);
 
@@ -460,6 +462,9 @@ void traceroute(string addr, int maxHops)
                         return;
                     }
                 } else {
+                    if (bytesRecved > 0 && bytesRecved < bufferSize)
+                        recvBuffer.resize(bytesRecved);
+
                     ipHeader *ipHdr = (ipHeader *) recvBuffer.data();
 
                     if (ipHdr->proto != IPPROTO_ICMP) {
@@ -473,8 +478,7 @@ void traceroute(string addr, int maxHops)
                     if ((errPack->icmpHdr.type == 11 && errPack->icmpHdr.code == 0)
                         || (errPack->icmpHdr.type == 3 && errPack->icmpHdr.code == 3)) {
                         GUID recvedGuid = errPack->data;
-
-                        if (errPack->icmpHdr.type == 11 && errPack->icmpHdr.code == 0) {
+                        if (recvedGuid != GUID_NULL) {
                             // Проверка совпадения GUID
                             auto it = sended.find(recvedGuid);
 
@@ -500,12 +504,12 @@ void traceroute(string addr, int maxHops)
                                     it->second.hostName = hostName;
                                 else
                                     it->second.hostName = ipStr;
-                            }
-                            lastPackGetted = true;
-                        }
+                                lastPackGetted = true;
 
-                        // При получении пакета с ошибкой 3:3, GUID не приходит
-                        if (errPack->icmpHdr.type == 3 && errPack->icmpHdr.code == 3) {
+                                if (errPack->icmpHdr.type == 3 && errPack->icmpHdr.code == 3)
+                                    destGetted = true;
+                            }
+                        } else {
                             // Проверка совпадения IP-адреса
                             if (errPack->origIpHdr.destIp != destAddr.sin_addr.s_addr) {
                                 continue;
@@ -548,7 +552,8 @@ void traceroute(string addr, int maxHops)
                                 sended[recvedGUID].hostName = ipStr;
 
                             lastPackGetted = true;
-                            destGetted = true;
+                            if (errPack->icmpHdr.type == 3 && errPack->icmpHdr.code == 3)
+                                destGetted = true;
                         }
                     }
                 }

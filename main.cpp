@@ -1,10 +1,10 @@
+#include <winsock2.h>
 #include <chrono>
 #include <combaseapi.h>
 #include <iostream>
 #include <map>
 #include <string>
 #include <vector>
-#include <winsock2.h>
 #include <ws2tcpip.h>
 
 using namespace std;
@@ -1022,8 +1022,6 @@ unsigned long getLocalIP(string addr)
         cerr << "Ошибка подключения к адресу: Неподдерживаемое семейство протоколов" << endl;
         return INADDR_ANY;
     }
-
-    loopback.sin_port = htons(53); // Порт DNS
 
     // Подключение к адресу
     if (connect(udpSock, (sockaddr *) &loopback, sizeof(loopback)) == SOCKET_ERROR) {

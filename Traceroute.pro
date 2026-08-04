@@ -6,6 +6,6 @@ CONFIG -= qt
 SOURCES += \
         main.cpp
 
-win32:LIBS += -lws2_32 -lole32
+win32:LIBS += -lws2_32 -lole32 -luuid
 
 HEADERS +=

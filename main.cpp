@@ -102,8 +102,6 @@ struct sendInfo
 
 #pragma pack(pop)
 
-const GUID GUID_NULL = {0, 0, 0, {0, 0, 0, 0, 0, 0, 0, 0}};
-
 /// Определение маршрута
 void traceroute(string addr, int maxHops = 30);
 
@@ -796,6 +794,9 @@ void tracert(string addr, int maxHops)
                     if (bytesRecved <= 0) {
                         continue;
                     }
+
+                    if (bytesRecved > 0 && bytesRecved < bufferSize)
+                        recvBuffer.resize(bytesRecved);
 
                     // Получение IP-заголовка из буфера
                     ipHeader *ipHdr = (ipHeader *) recvBuffer.data();
